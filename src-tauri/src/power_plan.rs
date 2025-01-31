@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use encoding_rs::GBK;
+use uuid::Uuid;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PowerPlan {
@@ -123,6 +124,102 @@ fn parse_plan_line(line: &str) -> Option<PowerPlan> {
         name,
         is_active,
     })
+}
+
+// 复制电源计划
+pub fn duplicate_power_plan(guid: &str) -> Result<String, String> {
+    let output = Command::new("powershell")
+        .args(["-Command", &format!("powercfg /duplicatescheme {}", guid)])
+        .output()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    if !output.status.success() {
+        let (cow, _encoding_used, had_errors) = GBK.decode(&output.stderr);
+        if had_errors {
+            return Err("GBK 解码失败".to_string());
+        }
+        return Err(cow.into_owned());
+    }
+
+    // 从输出中提取新的 GUID
+    let (cow, _encoding_used, had_errors) = GBK.decode(&output.stdout);
+    if had_errors {
+        return Err("GBK 解码失败".to_string());
+    }
+    let output_str = cow.into_owned();
+
+    // 尝试从输出中提取 GUID
+    if let Some(guid) = output_str
+        .lines()
+        .find(|line| line.contains("GUID:"))
+        .and_then(|line| line.split("GUID:").nth(1))
+        .map(|s| s.trim().to_string())
+    {
+        Ok(guid)
+    } else {
+        Err("无法从输出中提取 GUID".to_string())
+    }
+}
+
+// 删除电源计划
+pub fn delete_power_plan(guid: &str) -> Result<(), String> {
+    // 首先检查是否是当前活动的计划
+    let plans = get_power_plans()?;
+    if plans.iter().any(|plan| plan.guid == guid && plan.is_active) {
+        return Err("不能删除当前活动的电源计划".to_string());
+    }
+
+    let output = Command::new("powershell")
+        .args(["-Command", &format!("powercfg /delete {}", guid)])
+        .output()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    if !output.status.success() {
+        let (cow, _encoding_used, had_errors) = GBK.decode(&output.stderr);
+        if had_errors {
+            return Err("GBK 解码失败".to_string());
+        }
+        return Err(cow.into_owned());
+    }
+
+    Ok(())
+}
+
+// 更改计划名称
+pub fn rename_power_plan(guid: &str, new_name: &str) -> Result<(), String> {
+    let output = Command::new("powershell")
+        .args([
+            "-Command",
+            &format!("powercfg /changename {} \"{}\"", guid, new_name)
+        ])
+        .output()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    if !output.status.success() {
+        let (cow, _encoding_used, had_errors) = GBK.decode(&output.stderr);
+        if had_errors {
+            return Err("GBK 解码失败".to_string());
+        }
+        return Err(cow.into_owned());
+    }
+
+    Ok(())
+}
+
+// 添加 tauri 命令
+#[tauri::command]
+pub async fn duplicate_power_plan_command(guid: String) -> Result<String, String> {
+    duplicate_power_plan(&guid)
+}
+
+#[tauri::command]
+pub async fn delete_power_plan_command(guid: String) -> Result<(), String> {
+    delete_power_plan(&guid)
+}
+
+#[tauri::command]
+pub async fn rename_power_plan_command(guid: String, new_name: String) -> Result<(), String> {
+    rename_power_plan(&guid, &new_name)
 }
 
 #[cfg(test)]

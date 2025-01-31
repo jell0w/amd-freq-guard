@@ -1,6 +1,6 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from "vue";
-import { invoke } from "@tauri-apps/api/core";
+import { invoker } from './utils/invoker';
 import ToggleSwitch from 'primevue/toggleswitch';
 import InputNumber from 'primevue/inputnumber';
 import Slider from 'primevue/slider';
@@ -67,7 +67,7 @@ const modeDescriptions = {
 // 加载设置
 async function loadSettings() {
   try {
-    const settings = await invoke('load_settings');
+    const settings = await invoker('load_settings');
     autoStart.value = settings.auto_start;
     autoMinimize.value = settings.auto_minimize;
     refreshInterval.value = settings.refresh_interval;
@@ -89,7 +89,7 @@ async function saveSettings() {
       frequency_threshold: frequencyThreshold.value,
       frequency_mode: String(frequencyMode.value)  // 转换为字符串
     };
-    await invoke('save_settings', { settings });
+    await invoker('save_settings', { settings });
   } catch (e) {
     console.error('保存设置失败:', e);
   }
@@ -100,7 +100,7 @@ function checkFrequencyExceed(freq, index) {
   const freqGHz = freq / 1000;
   if (freqGHz > frequencyThreshold.value) {
     // 调用 Rust 函数
-    invoke('trigger_clock_exceed', {
+    invoker('trigger_clock_exceed', {
       coreId: index,
       frequency: freqGHz
     });
@@ -129,9 +129,9 @@ async function updateCpuFrequencies() {
   // isLoading.value = true;
   try {
     if (frequencyMode.value === 1) {
-      cpuFrequencies.value = await invoke("get_cpu_frequency_sysinfo");
+      cpuFrequencies.value = await invoker("get_cpu_frequency_sysinfo");
     } else {
-      cpuFrequencies.value = await invoke("get_cpu_frequency_calcmhz");
+      cpuFrequencies.value = await invoker("get_cpu_frequency_calcmhz");
     }
 
     // 检查超频状态

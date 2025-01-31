@@ -135,6 +135,13 @@ fn set_active_plan_command(guid: String) -> Result<(), String> {
     set_active_plan(&guid)
 }
 
+// 重新导出命令
+pub use power_plan::{
+    duplicate_power_plan_command,
+    delete_power_plan_command,
+    rename_power_plan_command
+};
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let system = SystemState(Mutex::new(System::new()));
@@ -210,7 +217,10 @@ pub fn run() {
             load_settings,
             trigger_clock_exceed,
             get_power_plans_command,
-            set_active_plan_command
+            set_active_plan_command,
+            duplicate_power_plan_command,
+            delete_power_plan_command,
+            rename_power_plan_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
