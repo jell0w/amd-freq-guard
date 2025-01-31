@@ -10,6 +10,23 @@
         padding: 0;
         box-sizing: border-box;
       }
+
+      /* 隐藏滚动条但保持可滚动 */
+      ::-webkit-scrollbar {
+        display: none;
+      }
+
+      /* 使用更现代的滚动行为 */
+      * {
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+      }
+
+      /* 确保根元素占满视口 */
+      html, body, #app {
+        height: 100vh;
+        overflow: hidden;
+      }
     </style>
     <title>AMDFreqGuard</title>
   </head>

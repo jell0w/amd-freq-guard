@@ -10,10 +10,18 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, State,
 };
+use std::fmt;
 
 // 在文件顶部添加模块声明
 mod power_plan;
 use power_plan::{get_power_plans, set_active_plan, PowerPlan};
+
+mod trigger_action;
+pub use trigger_action::{
+    save_trigger_action,
+    delete_trigger_action,
+    load_trigger_actions,
+};
 
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
@@ -26,6 +34,16 @@ pub enum FrequencyMode {
     SysInfo = 1,
     #[serde(rename = "2")]
     CalcMhz = 2,
+}
+
+// 为 FrequencyMode 实现 Display trait
+impl fmt::Display for FrequencyMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            FrequencyMode::SysInfo => write!(f, "1"),
+            FrequencyMode::CalcMhz => write!(f, "2"),
+        }
+    }
 }
 
 impl Default for FrequencyMode {
@@ -41,7 +59,11 @@ struct Settings {
     auto_minimize: bool,
     refresh_interval: u64,
     frequency_threshold: f64,
-    frequency_mode: FrequencyMode, // 确保这个字段被正确序列化和反序列化
+    frequency_mode: String,
+    auto_switch_enabled: bool,
+    auto_switch_threshold: u64,
+    trigger_action_enabled: bool,
+    frequency_detection_enabled: bool,  // 添加频率检测开关
 }
 
 impl Default for Settings {
@@ -51,7 +73,11 @@ impl Default for Settings {
             auto_minimize: false,
             refresh_interval: 1000,
             frequency_threshold: 3.5,
-            frequency_mode: FrequencyMode::default(),
+            frequency_mode: FrequencyMode::default().to_string(),
+            auto_switch_enabled: false,
+            auto_switch_threshold: 25,
+            trigger_action_enabled: false,
+            frequency_detection_enabled: true,  // 默认开启
         }
     }
 }
@@ -93,7 +119,54 @@ async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
 
     // 读取并解析设置文件
     let content = fs::read_to_string(settings_path).map_err(|e| e.to_string())?;
-    let settings: Settings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    
+    // 先解析为 serde_json::Value，这样我们可以处理缺失的字段
+    let stored_settings: serde_json::Value = serde_json::from_str(&content)
+        .map_err(|e| format!("解析设置失败: {}", e))?;
+    
+    // 获取默认设置
+    let default_settings = Settings::default();
+    
+    // 构建完整的设置，使用存储的值或默认值
+    let settings = Settings {
+        auto_start: stored_settings.get("auto_start")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default_settings.auto_start),
+            
+        auto_minimize: stored_settings.get("auto_minimize")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default_settings.auto_minimize),
+            
+        refresh_interval: stored_settings.get("refresh_interval")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(default_settings.refresh_interval),
+            
+        frequency_threshold: stored_settings.get("frequency_threshold")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(default_settings.frequency_threshold),
+            
+        frequency_mode: stored_settings.get("frequency_mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or(&default_settings.frequency_mode)
+            .to_string(),
+            
+        auto_switch_enabled: stored_settings.get("auto_switch_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default_settings.auto_switch_enabled),
+            
+        auto_switch_threshold: stored_settings.get("auto_switch_threshold")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(default_settings.auto_switch_threshold),
+            
+        trigger_action_enabled: stored_settings.get("trigger_action_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default_settings.trigger_action_enabled),
+            
+        frequency_detection_enabled: stored_settings.get("frequency_detection_enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(default_settings.frequency_detection_enabled),
+    };
+
     Ok(settings)
 }
 
@@ -219,7 +292,10 @@ pub fn run() {
             delete_power_plan_command,
             rename_power_plan_command,
             export_power_plan_command,
-            import_power_plan_command
+            import_power_plan_command,
+            save_trigger_action,
+            delete_trigger_action,
+            load_trigger_actions,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -11,6 +11,9 @@ import Button from 'primevue/button';
 import Dropdown from 'primevue/dropdown';
 import SelectButton from 'primevue/selectbutton';
 import Dialog from 'primevue/dialog';
+import Message from 'primevue/message';
+import { useToast } from 'primevue/usetoast';
+const toast = useToast();
 
 const cpuFrequencies = ref([]);
 const autoStart = ref(false);
@@ -64,6 +67,33 @@ const modeDescriptions = {
   }
 };
 
+// 修改自动切换相关的状态
+const autoSwitchEnabled = ref(false);
+const autoSwitchThreshold = ref(25);
+const unchangedCount = ref(0);
+const lastFrequencies = ref([]);
+const lastUpdateCount = ref(0);  // 添加这行，记录上次更新是在多少次之前
+
+// 添加新的状态
+const triggerActionEnabled = ref(false);
+
+// 添加频率检测开关状态
+const frequencyDetectionEnabled = ref(true);
+
+// 修改 Settings 接口
+const defaultSettings = {
+  auto_start: false,
+  auto_minimize: false,
+  refresh_interval: 1000,
+  frequency_threshold: 3.5,
+  frequency_mode: "1",
+  auto_switch_enabled: false,
+  auto_switch_threshold: 25
+};
+
+// 添加触发动作列表状态
+const triggerActions = ref([]);
+
 // 加载设置
 async function loadSettings() {
   try {
@@ -73,7 +103,10 @@ async function loadSettings() {
     refreshInterval.value = settings.refresh_interval;
     frequencyThreshold.value = settings.frequency_threshold;
     frequencyMode.value = parseInt(settings.frequency_mode);
-    // console.log('loadSettings',settings);
+    autoSwitchEnabled.value = settings.auto_switch_enabled;
+    autoSwitchThreshold.value = settings.auto_switch_threshold;
+    triggerActionEnabled.value = settings.trigger_action_enabled;
+    frequencyDetectionEnabled.value = settings.frequency_detection_enabled ?? true;  // 默认开启
   } catch (e) {
     console.error('加载设置失败:', e);
   }
@@ -87,7 +120,11 @@ async function saveSettings() {
       auto_minimize: autoMinimize.value,
       refresh_interval: refreshInterval.value,
       frequency_threshold: frequencyThreshold.value,
-      frequency_mode: String(frequencyMode.value)  // 转换为字符串
+      frequency_mode: String(frequencyMode.value),
+      auto_switch_enabled: autoSwitchEnabled.value,
+      auto_switch_threshold: autoSwitchThreshold.value,
+      trigger_action_enabled: triggerActionEnabled.value,
+      frequency_detection_enabled: frequencyDetectionEnabled.value
     };
     await invoker('save_settings', { settings });
   } catch (e) {
@@ -125,11 +162,44 @@ async function handleModeChange() {
 
 // 修改更新CPU频率函数
 async function updateCpuFrequencies() {
+  // 如果频率检测关闭，则不执行
+  if (!frequencyDetectionEnabled.value) {
+    return;
+  }
+
   isRefreshing.value = true;
-  // isLoading.value = true;
   try {
     if (frequencyMode.value === 1) {
-      cpuFrequencies.value = await invoker("get_cpu_frequency_sysinfo");
+      const newFrequencies = await invoker("get_cpu_frequency_sysinfo");
+      
+      // 检查频率是否有变化
+      if (autoSwitchEnabled.value && autoSwitchThreshold.value > 0) {
+        const hasChanged = !lastFrequencies.value.length || 
+          newFrequencies.some((freq, i) => freq !== lastFrequencies.value[i]);
+        
+        if (!hasChanged) {
+          unchangedCount.value++;
+          lastUpdateCount.value = unchangedCount.value;  // 更新计数
+          if (unchangedCount.value >= autoSwitchThreshold.value) {
+            // 自动切换到 CalcMhz 模式
+            frequencyMode.value = 2;
+            unchangedCount.value = 0;
+            lastUpdateCount.value = 0;
+            toast.add({
+              severity: 'info',
+              summary: '模式已自动切换',
+              detail: '检测到频率长时间未更新，已切换到 CalcMhz 模式',
+              life: 5000
+            });
+          }
+        } else {
+          unchangedCount.value = 0;
+          lastUpdateCount.value = 0;
+        }
+        lastFrequencies.value = [...newFrequencies];
+      }
+      
+      cpuFrequencies.value = newFrequencies;
     } else {
       cpuFrequencies.value = await invoker("get_cpu_frequency_calcmhz");
     }
@@ -171,8 +241,39 @@ function handleIntervalChange(e) {
   saveSettings();
 }
 
+// 处理自动切换开关变化
+function handleAutoSwitchChange() {
+  if (!autoSwitchEnabled.value) {
+    autoSwitchThreshold.value = 0;
+    unchangedCount.value = 0;
+    lastUpdateCount.value = 0;
+    lastFrequencies.value = [];
+  } else {
+    autoSwitchThreshold.value = 25;
+  }
+  saveSettings();
+}
+
+// 添加阈值变化处理函数
+function handleThresholdChange() {
+  saveSettings();
+}
+
+// 加载触发动作列表
+async function loadTriggerActions() {
+  try {
+    const actions = await invoker('load_trigger_actions');
+    triggerActions.value = Array.isArray(actions) ? actions : [];
+    console.log('加载的触发动作:', triggerActions.value); // 添加日志
+  } catch (error) {
+    console.error('加载触发动作失败:', error);
+    triggerActions.value = [];
+  }
+}
+
 onMounted(async () => {
   await loadSettings();
+  await loadTriggerActions();  // 加载触发动作列表
   updateCpuFrequencies();
   handleIntervalChange();
 });
@@ -185,26 +286,63 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <!-- 修改刷新指示器 -->
+  <!-- 添加回刷新指示器 -->
   <div class="refresh-indicator" :class="{
     'refreshing': isRefreshing,
     'warning': indicatorStatus === 'warning',
     'danger': indicatorStatus === 'danger'
-  }">
-  </div>
+  }"></div>
 
-  <main class="container">
+  <div class="container">
     <div class="app-layout">
       <!-- 左侧设置面板 -->
       <div class="settings-panel">
         <h2>设置</h2>
-        <Button label="电源计划管理" icon="pi pi-cog" @click="$router.push('/power-plan')" class="power-plan-button" />
+        <div class="action-buttons">
+          <Button label="触发动作管理" 
+                  icon="pi pi-bolt" 
+                  style="width: 100%;"
+                  @click="$router.push('/trigger-action')" />
+          <Button label="电源计划管理" 
+                  icon="pi pi-cog" 
+                  style="width: 100%;"
+                  @click="$router.push('/power-plan')" />
+        </div>
         <div class="setting-group">
+          <div class="setting-group-title">功能开关</div>
+          <div class="switch-list">
+            <div class="switch-item">
+              <div class="switch-header">
+                <span>频率检测</span>
+                <ToggleSwitch v-model="frequencyDetectionEnabled"
+                             @change="saveSettings" />
+              </div>
+              <p class="switch-desc">开启后将持续监控 CPU 频率变化</p>
+            </div>
+
+            <div class="switch-item">
+              <div class="switch-header">
+                <span>触发动作处理器</span>
+                <ToggleSwitch v-model="triggerActionEnabled"
+                             :disabled="!triggerActions.length > 0"
+                             @change="saveSettings" />
+              </div>
+              <p class="switch-desc">当 CPU 频率超过阈值时执行已启用的触发动作</p>
+              <Message v-if="!triggerActions.length > 0"
+                      severity="warn"
+                      class="switch-message">
+                请先在触发动作管理中创建至少一个动作
+              </Message>
+            </div>
+          </div>
+        </div>
+
+        <div class="setting-group">
+          <div class="setting-group-title">基本设置</div>
           <div class="setting-item">
             <span>开机自启</span>
             <ToggleSwitch v-model="autoStart" @change="saveSettings" />
           </div>
-
           <div class="setting-item">
             <span>自启时最小化</span>
             <ToggleSwitch v-model="autoMinimize" @change="saveSettings" />
@@ -212,13 +350,20 @@ onUnmounted(() => {
         </div>
 
         <div class="setting-group">
+          <div class="setting-group-title">监控设置</div>
           <div class="setting-item">
             <span>刷新间隔</span>
             <div class="interval-control">
-              <Slider v-model="refreshInterval" :min="320" :max="5000" :step="10" class="custom-slider"
-                @change="handleIntervalChange" />
-              <InputNumber v-model="refreshInterval" :min="320" suffix=" ms" @change="handleIntervalChange"
-                @input="handleIntervalChange" />
+              <Slider v-model="refreshInterval" 
+                     :min="320" 
+                     :max="5000" 
+                     :step="10" 
+                     class="custom-slider"
+                     @change="handleIntervalChange" />
+              <InputNumber v-model="refreshInterval" 
+                          :min="320" 
+                          suffix=" ms" 
+                          @change="handleIntervalChange" />
             </div>
           </div>
 
@@ -226,17 +371,18 @@ onUnmounted(() => {
             <span>频率阈值</span>
             <div class="interval-control">
               <Slider v-model="frequencyThreshold" :min="1.0" :max="5.0" :step="0.1" class="custom-slider"
-                @change="saveSettings" />
-              <InputNumber v-model="frequencyThreshold" :maxFractionDigits="3" suffix=" GHz" @input="saveSettings" />
+                @change="handleThresholdChange" />
+              <InputNumber v-model="frequencyThreshold" :maxFractionDigits="3" suffix=" GHz" @input="handleThresholdChange" />
             </div>
           </div>
         </div>
 
         <div class="setting-group">
+          <!-- <div class="setting-group-title">频率获取模式</div> -->
           <div class="setting-item">
             <span>频率获取模式</span>
             <div class="mode-select-container">
-              <SelectButton v-model="frequencyMode" :options="frequencyModes" optionLabel="label" optionValue="value"
+              <SelectButton :allowEmpty="false" v-model="frequencyMode" :options="frequencyModes" optionLabel="label" optionValue="value"
                 class="frequency-mode-select" @change="handleModeChange">
                 <template #option="slotProps">
                   <span v-tooltip.bottom="slotProps.option.desc" class="mode-label">{{ slotProps.option.label }}</span>
@@ -250,7 +396,7 @@ onUnmounted(() => {
       </div>
 
       <!-- 右侧CPU信息面板 -->
-      <div class="monitor-panel">
+      <div class="monitoring-panel">
         <h1>CPU 频率监控</h1>
 
         <!-- 加载中提示 -->
@@ -260,41 +406,84 @@ onUnmounted(() => {
         </div>
 
         <!-- SysInfo 模式的网格布局 -->
-        <div v-else-if="frequencyMode === 1" class="cpu-grid">
-          <Card v-for="(freq, index) in cpuFrequencies" :key="index" :pt="{
-            root: { class: freq / 1000 > frequencyThreshold ? 'card-exceed' : 'card-normal' }
-          }" @click="showNotification(`核心：${index + 1}`, (freq / 1000).toFixed(2))">
-            <template #content>
-              <div class="core-info">
-                <div class="core-header">
-                  <span class="core-label">Core {{ index + 1 }}</span>
-                  <span class="unit">GHz</span>
+        <template v-if="frequencyDetectionEnabled">
+          <div v-if="frequencyMode === 1">
+            <div class="cpu-grid">
+              <Card v-for="(freq, index) in cpuFrequencies" :key="index" :pt="{
+                root: { class: freq / 1000 > frequencyThreshold ? 'card-exceed' : 'card-normal' }
+              }" @click="showNotification(`核心：${index + 1}`, (freq / 1000).toFixed(2))">
+                <template #content>
+                  <div class="core-info">
+                    <div class="core-header">
+                      <span class="core-label">Core {{ index + 1 }}</span>
+                      <span class="unit">GHz</span>
+                    </div>
+                    <div class="frequency">{{ (freq / 1000).toFixed(2) }}</div>
+                  </div>
+                </template>
+              </Card>
+            </div>
+            <Message v-if="frequencyMode === 1" 
+                     severity="warn" 
+                     class="mode-warning">
+              <div class="warning-content">
+                <div class="warning-text">
+                  注意，在此模式下，可能在某些机型、某些条件(如此前进入了睡眠状态)下，频率会不更新，这样子的话你需要切换到CalcMhz模式。
                 </div>
-                <div class="frequency">{{ (freq / 1000).toFixed(2) }}</div>
+                <div class="auto-switch-section">
+                  <div class="auto-switch-header">
+                    <ToggleSwitch v-model="autoSwitchEnabled"
+                                 @change="handleAutoSwitchChange" />
+                    <span>自动切换到 CalcMhz 模式</span>
+                  </div>
+                  <div v-if="autoSwitchEnabled" 
+                       class="auto-switch-details">
+                    <div class="threshold-control">
+                      <span>在连续</span>
+                      <InputNumber v-model="autoSwitchThreshold"
+                                  :min="20"
+                                  :max="1000"
+                                   />
+                      <span>次未更新后切换</span>
+                    </div>
+                    <div v-if="lastUpdateCount > 0" 
+                         class="update-status">
+                      <i class="pi pi-clock"></i>
+                      <span>上次数据更新是在 {{ lastUpdateCount }} 次刷新之前</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </template>
-          </Card>
-        </div>
+            </Message>
+          </div>
 
-        <!-- CalcMhz 模式的单卡片布局 -->
-        <div v-else class="single-cpu-container">
-          <Card v-if="cpuFrequencies.length > 0" :pt="{
-            root: { class: cpuFrequencies[0] / 1000 > frequencyThreshold ? 'card-exceed' : 'card-normal' }
-          }">
-            <template #content>
-              <div class="main-frequency-info">
-                <div class="frequency-header">
-                  <span class="frequency-label">主频</span>
-                  <span class="unit">GHz</span>
+          <!-- CalcMhz 模式的单卡片布局 -->
+          <div v-else class="single-cpu-container">
+            <Card v-if="cpuFrequencies.length > 0" :pt="{
+              root: { class: cpuFrequencies[0] / 1000 > frequencyThreshold ? 'card-exceed' : 'card-normal' }
+            }">
+              <template #content>
+                <div class="main-frequency-info">
+                  <div class="frequency-header">
+                    <span class="frequency-label">主频</span>
+                    <span class="unit">GHz</span>
+                  </div>
+                  <div class="main-frequency">{{ (cpuFrequencies[0] / 1000).toFixed(3) }}</div>
                 </div>
-                <div class="main-frequency">{{ (cpuFrequencies[0] / 1000).toFixed(3) }}</div>
-              </div>
-            </template>
-          </Card>
-        </div>
+              </template>
+            </Card>
+          </div>
+        </template>
+        <template v-else>
+          <div class="detection-disabled">
+            <i class="pi pi-power-off"></i>
+            <h3>频率检测已关闭</h3>
+            <p>开启频率检测以监控 CPU 频率变化</p>
+          </div>
+        </template>
       </div>
     </div>
-  </main>
+  </div>
 
   <!-- 添加模式说明对话框 -->
   <Dialog v-model:visible="modeDialogVisible" modal header="频率获取模式说明" :style="{ width: '50rem' }"
@@ -328,32 +517,32 @@ onUnmounted(() => {
 .container {
   height: 100vh;
   background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
-  padding: 0.5rem;
   color: #fff;
   overflow: hidden;
 }
 
 .app-layout {
   display: grid;
-  grid-template-columns: 250px 1fr;
-  gap: 0.5rem;
-  height: 100%;
+  grid-template-columns: 320px 1fr;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .settings-panel {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(10px);
-  border-radius: 8px;
-  padding: 0.75rem;
+  padding: 1.5rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  height: 100%;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 1.5rem;
 }
 
-.monitor-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+.monitoring-panel {
+  padding: 1.5rem;
+  height: 100%;
+  overflow-y: auto;
 }
 
 h1 {
@@ -372,16 +561,19 @@ h2 {
 }
 
 .setting-group {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 1rem;
 }
 
 .setting-item {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.25rem 0;
+  gap: 0.75rem;
 }
 
 .setting-item>span {
@@ -451,17 +643,19 @@ h2 {
 }
 
 .interval-control {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  padding: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  width: 100%;
+  gap: 1rem;
 }
 
 .custom-slider {
   width: 100%;
 }
 
-/* 修改刷新指示器样式 */
+/* 确保刷新指示器样式存在 */
 .refresh-indicator {
   position: fixed;
   top: 1rem;
@@ -472,6 +666,7 @@ h2 {
   background-color: #00ffcc;
   opacity: 0.2;
   transition: all 0.2s ease;
+  z-index: 1000;  /* 确保显示在最上层 */
 }
 
 .refresh-indicator.refreshing {
@@ -664,5 +859,148 @@ h2 {
   .settings-panel {
     height: auto;
   }
+}
+
+.mode-warning {
+  margin-top: 1rem;
+}
+
+.warning-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.warning-text {
+  line-height: 1.5;
+}
+
+.auto-switch-section {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.auto-switch-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.auto-switch-details {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.threshold-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+}
+
+.threshold-input {
+  width: 4rem;
+}
+
+.threshold-input :deep(.p-inputnumber-input) {
+  height: 2rem;
+  padding: 0.25rem;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.update-status {
+  margin-top: 0.75rem;
+  padding: 0.5rem;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 4px;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.update-status i {
+  font-size: 0.9rem;
+  opacity: 0.7;
+}
+
+/* 添加设置组标题 */
+.setting-group-title {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin-bottom: 0.5rem;
+  font-weight: 500;
+}
+
+/* 优化滑块和输入框组合 */
+.interval-control {
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.action-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.switch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.switch-item {
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  padding: 1rem;
+}
+
+.switch-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.switch-desc {
+  margin: 0;
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.switch-message {
+  margin-top: 0.75rem;
+}
+
+.detection-disabled {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.5);
+  gap: 1rem;
+}
+
+.detection-disabled i {
+  font-size: 3rem;
+}
+
+.detection-disabled h3 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.detection-disabled p {
+  margin: 0;
+  font-size: 0.9rem;
 }
 </style>
