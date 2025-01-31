@@ -1,19 +1,19 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-use serde::{Deserialize, Serialize};
-use std::{sync::Mutex, fs, path::PathBuf, process::Command};
-use sysinfo::{CpuRefreshKind, System};
-use tauri::{
-    tray::{TrayIconBuilder, MouseButtonState, MouseButton, TrayIconEvent},
-    menu::{Menu, MenuItem},
-    Manager, State,
-};
 use calcmhz;
+use serde::{Deserialize, Serialize};
 use std::thread;
 use std::time::Duration;
+use std::{fs, path::PathBuf, process::Command, sync::Mutex};
+use sysinfo::{CpuRefreshKind, System};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    Manager, State,
+};
 
 // 在文件顶部添加模块声明
 mod power_plan;
-use power_plan::{PowerPlan, get_power_plans, set_active_plan};
+use power_plan::{get_power_plans, set_active_plan, PowerPlan};
 
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
@@ -41,7 +41,7 @@ struct Settings {
     auto_minimize: bool,
     refresh_interval: u64,
     frequency_threshold: f64,
-    frequency_mode: FrequencyMode,  // 确保这个字段被正确序列化和反序列化
+    frequency_mode: FrequencyMode, // 确保这个字段被正确序列化和反序列化
 }
 
 impl Default for Settings {
@@ -68,17 +68,14 @@ fn get_settings_path(app: &tauri::AppHandle) -> PathBuf {
 // }
 
 #[tauri::command]
-async fn save_settings(
-    app: tauri::AppHandle,
-    settings: Settings,
-) -> Result<(), String> {
+async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
     let settings_path = get_settings_path(&app);
-    
+
     // 确保目录存在
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    
+
     // 将设置序列化为JSON并保存到文件
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(settings_path, json).map_err(|e| e.to_string())?;
@@ -88,12 +85,12 @@ async fn save_settings(
 #[tauri::command]
 async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
     let settings_path = get_settings_path(&app);
-    
+
     // 如果文件不存在，返回默认设置
     if !settings_path.exists() {
         return Ok(Settings::default());
     }
-    
+
     // 读取并解析设置文件
     let content = fs::read_to_string(settings_path).map_err(|e| e.to_string())?;
     let settings: Settings = serde_json::from_str(&content).map_err(|e| e.to_string())?;
@@ -104,11 +101,11 @@ async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
 #[tauri::command]
 async fn get_cpu_frequency_calcmhz() -> Result<Vec<u64>, String> {
     // 使用 tokio 的 spawn_blocking
-    match tauri::async_runtime::spawn_blocking(|| {
-        calcmhz::mhz().map(|freq| vec![freq as u64])
-    }).await {
+    match tauri::async_runtime::spawn_blocking(|| calcmhz::mhz().map(|freq| vec![freq as u64]))
+        .await
+    {
         Ok(result) => result.map_err(|e| format!("获取CPU频率失败: {}", e)),
-        Err(_) => Err("获取频率失败".to_string())
+        Err(_) => Err("获取频率失败".to_string()),
     }
 }
 
@@ -137,9 +134,8 @@ fn set_active_plan_command(guid: String) -> Result<(), String> {
 
 // 重新导出命令
 pub use power_plan::{
-    duplicate_power_plan_command,
-    delete_power_plan_command,
-    rename_power_plan_command
+    delete_power_plan_command, duplicate_power_plan_command, export_power_plan_command,
+    import_power_plan_command, rename_power_plan_command,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -147,12 +143,13 @@ pub fn run() {
     let system = SystemState(Mutex::new(System::new()));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             // 获取主窗口
             let window = app.get_webview_window("main").unwrap();
             let window_clone = window.clone();
-            
+
             // 处理窗口关闭事件
             window.on_window_event(move |event| {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -220,7 +217,9 @@ pub fn run() {
             set_active_plan_command,
             duplicate_power_plan_command,
             delete_power_plan_command,
-            rename_power_plan_command
+            rename_power_plan_command,
+            export_power_plan_command,
+            import_power_plan_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

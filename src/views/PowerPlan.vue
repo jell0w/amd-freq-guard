@@ -1,12 +1,16 @@
 <script setup>
 import { ref, onMounted } from 'vue';
 import { invoker } from '../utils/invoker';
+import { save, open } from '@tauri-apps/plugin-dialog';
 import Card from 'primevue/card';
 import Button from 'primevue/button';
 import Menu from 'primevue/menu';
 import { useRouter } from 'vue-router';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
+import { useToast } from 'primevue/usetoast';
+
+const toast = useToast();
 
 const router = useRouter();
 const powerPlans = ref([]);
@@ -26,6 +30,11 @@ const menuItems = ref([
     label: '复制',
     icon: 'pi pi-copy',
     command: () => duplicatePlan()
+  },
+  {
+    label: '导出',
+    icon: 'pi pi-upload',
+    command: () => exportPlan()
   },
   {
     label: '删除',
@@ -115,6 +124,60 @@ async function renamePlan() {
   }
 }
 
+// 导出电源计划
+async function exportPlan() {
+  if (!selectedPlan.value) return;
+  try {
+    const filePath = await save({
+      filters: [{
+        name: '电源计划文件',
+        extensions: ['pow']
+      }],
+      defaultPath: `${selectedPlan.value.name}.pow`
+    });
+    
+    if (filePath) {
+      await invoker('export_power_plan_command', {
+        guid: selectedPlan.value.guid,
+        filePath
+      });
+      toast.add({
+        severity: 'success',
+        summary: '导出成功',
+        detail: '电源计划已成功导出',
+        life: 3000
+      });
+    }
+  } catch (error) {
+    console.error('导出电源计划失败:', error);
+  }
+}
+
+// 导入电源计划
+async function importPlan() {
+  try {
+    const filePath = await open({
+      filters: [{
+        name: '电源计划文件',
+        extensions: ['pow']
+      }]
+    });
+    
+    if (filePath) {
+      await invoker('import_power_plan_command', { filePath });
+      await loadPowerPlans(); // 重新加载计划列表
+      toast.add({
+        severity: 'success',
+        summary: '导入成功',
+        detail: '电源计划已成功导入',
+        life: 3000
+      });
+    }
+  } catch (error) {
+    console.error('导入电源计划失败:', error);
+  }
+}
+
 onMounted(() => {
   loadPowerPlans();
 });
@@ -131,12 +194,19 @@ onMounted(() => {
                 @click="router.back()" />
         <h1>电源计划管理</h1>
       </div>
-      <Button icon="pi pi-refresh" 
-              rounded 
-              text 
-              class="refresh-button"
-              :loading="isLoading"
-              @click="loadPowerPlans" />
+      <div class="header-actions">
+        <Button icon="pi pi-download"
+                label="导入计划"
+                text
+                @click="importPlan"
+                class="import-button" />
+        <Button icon="pi pi-refresh" 
+                rounded 
+                text 
+                class="refresh-button"
+                :loading="isLoading"
+                @click="loadPowerPlans" />
+      </div>
     </div>
 
     <div class="plans-list">
@@ -377,5 +447,19 @@ h1 {
   display: flex;
   justify-content: flex-end;
   gap: 0.5rem;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.import-button {
+  color: #fff;
+}
+
+.import-button:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 </style> 
