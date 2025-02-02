@@ -2,6 +2,9 @@ use encoding_rs::GBK;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use uuid::Uuid;
+use std::os::windows::process::CommandExt;
+
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PowerPlan {
@@ -11,8 +14,9 @@ pub struct PowerPlan {
 }
 
 pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
-    let output = Command::new("powershell")
-        .args(["-Command", "powercfg /list"])
+    let output = Command::new("powercfg")
+        .args(["/list"])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;
 
@@ -39,8 +43,9 @@ pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
 }
 
 pub fn set_active_plan(guid: &str) -> Result<(), String> {
-    let output = Command::new("powershell")
-        .args(["-Command", &format!("powercfg /setactive {}", guid)])
+    let output = Command::new("powercfg")
+        .args(["/setactive", guid])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("设置活动计划失败: {}", e))?;
 
@@ -128,8 +133,9 @@ fn parse_plan_line(line: &str) -> Option<PowerPlan> {
 
 // 复制电源计划
 pub fn duplicate_power_plan(guid: &str) -> Result<String, String> {
-    let output = Command::new("powershell")
-        .args(["-Command", &format!("powercfg /duplicatescheme {}", guid)])
+    let output = Command::new("powercfg")
+        .args(["/duplicatescheme", guid])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;
 
@@ -169,8 +175,9 @@ pub fn delete_power_plan(guid: &str) -> Result<(), String> {
         return Err("不能删除当前活动的电源计划".to_string());
     }
 
-    let output = Command::new("powershell")
-        .args(["-Command", &format!("powercfg /delete {}", guid)])
+    let output = Command::new("powercfg")
+        .args(["/delete", guid])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;
 
@@ -187,11 +194,9 @@ pub fn delete_power_plan(guid: &str) -> Result<(), String> {
 
 // 更改计划名称
 pub fn rename_power_plan(guid: &str, new_name: &str) -> Result<(), String> {
-    let output = Command::new("powershell")
-        .args([
-            "-Command",
-            &format!("powercfg /changename {} \"{}\"", guid, new_name),
-        ])
+    let output = Command::new("powercfg")
+        .args(["/changename", guid, new_name])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("执行命令失败: {}", e))?;
 
@@ -224,11 +229,9 @@ pub async fn rename_power_plan_command(guid: String, new_name: String) -> Result
 
 // 导出电源计划
 pub fn export_power_plan(guid: &str, file_path: &str) -> Result<(), String> {
-    let output = Command::new("powershell")
-        .args([
-            "-Command",
-            &format!("powercfg /export \"{}\" {}", file_path, guid),
-        ])
+    let output = Command::new("powercfg")
+        .args(["/export", file_path, guid])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("执行导出命令失败: {}", e))?;
 
@@ -245,8 +248,9 @@ pub fn export_power_plan(guid: &str, file_path: &str) -> Result<(), String> {
 
 // 导入电源计划
 pub fn import_power_plan(file_path: &str) -> Result<String, String> {
-    let output = Command::new("powershell")
-        .args(["-Command", &format!("powercfg /import \"{}\"", file_path)])
+    let output = Command::new("powercfg")
+        .args(["/import", file_path])
+        .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|e| format!("执行导入命令失败: {}", e))?;
 
@@ -306,5 +310,20 @@ mod tests {
         assert_eq!(plans.len(), 3);
         assert_eq!(plans[1].is_active, true);
         assert_eq!(plans[1].name, "我的自定义计划 1");
+    }
+}
+
+// 修改执行命令的函数
+fn execute_powercfg(args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("powercfg")
+        .args(args)
+        .creation_flags(CREATE_NO_WINDOW) // 添加这个标志来隐藏窗口
+        .output()
+        .map_err(|e| format!("执行命令失败: {}", e))?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
     }
 }

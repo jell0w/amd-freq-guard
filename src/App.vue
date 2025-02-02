@@ -588,7 +588,13 @@ async function openExternalLink(url) {
                 @click="() => openExternalLink('https://github.com/jell0w/amd-freq-guard')" />
       </div>
 
-      <div v-if="cpuFrequencies.length === 0" class="monitoring-panel">
+      <div v-if="!frequencyDetectionEnabled" class="detection-disabled">
+            <i class="pi pi-power-off"></i>
+            <h3>频率检测已关闭</h3>
+            <p>开启频率检测以监控 CPU 频率变化</p>
+          </div>
+
+      <div v-else-if="cpuFrequencies.length === 0" class="monitoring-panel">
             <Skeleton height="20px" width="120px" />
             <div class="cpu-grid">
               <Skeleton height="100px" width="120px" v-for="i in 10" :key="i" />
@@ -669,13 +675,6 @@ async function openExternalLink(url) {
                 </div>
               </template>
             </Card>
-          </div>
-        </template>
-        <template v-else>
-          <div class="detection-disabled">
-            <i class="pi pi-power-off"></i>
-            <h3>频率检测已关闭</h3>
-            <p>开启频率检测以监控 CPU 频率变化</p>
           </div>
         </template>
       </div>

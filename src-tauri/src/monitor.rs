@@ -1,7 +1,7 @@
 use crate::notification::send_notification;
 use crate::power_plan::set_active_plan;
 use crate::settings::Settings;
-use crate::trigger_action::TriggerAction;
+use crate::trigger_action::{load_trigger_actions, TriggerAction};
 use calcmhz;
 use log::{error, info, warn};
 use serde::Serialize;
@@ -127,19 +127,6 @@ impl Monitor {
         let window = self.window.clone();
         let last_alert_time = self.last_alert_time.clone();
 
-        // 初始化状态
-        {
-            let mut state_guard = state.lock().await;
-            state_guard.last_update_count = 0; // 确保计数从0开始
-
-            // 检查是否需要启动自动切换检测
-            let settings_guard = settings.lock().await;
-            if settings_guard.auto_switch_enabled && settings_guard.frequency_mode == "1" {
-                info!("自动切换功能已启用，开始计数");
-                drop(settings_guard);
-            }
-        }
-
         tokio::spawn(async move {
             let mut current_interval = {
                 let settings = settings.lock().await;
@@ -149,76 +136,79 @@ impl Monitor {
             let mut interval = tokio_interval(Duration::from_millis(current_interval));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-            let mut last_frequencies = Vec::new();
+            let mut last_frequencies: Vec<u64> = Vec::new();
             let mut unchanged_count = 0;
 
             while *running.read().await {
                 interval.tick().await;
 
+                // 检查频率检测是否启用
                 let settings_guard = settings.lock().await;
                 if !settings_guard.frequency_detection_enabled {
                     drop(settings_guard);
+                    // 如果频率检测被禁用，清空频率数据并通知前端
+                    let mut state = state.lock().await;
+                    if !state.frequencies.is_empty() {
+                        state.frequencies = Vec::new();
+                        if let Some(window) = &window {
+                            let _ = window.emit("monitor-state-updated", &*state);
+                        }
+                    }
                     continue;
                 }
 
-                // 检查刷新间隔是否改变
-                if current_interval != settings_guard.refresh_interval {
-                    current_interval = settings_guard.refresh_interval;
-                    interval = tokio_interval(Duration::from_millis(current_interval));
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                    info!("刷新间隔已更新: {} ms", current_interval);
-                }
-
-                let refresh_interval = settings_guard.refresh_interval;
+                // 获取当前设置
                 let frequency_mode = settings_guard.frequency_mode.clone();
                 let frequency_threshold = settings_guard.frequency_threshold;
                 let trigger_action_enabled = settings_guard.trigger_action_enabled;
-                let auto_switch_enabled = settings_guard.auto_switch_enabled;
-                let auto_switch_threshold = settings_guard.auto_switch_threshold;
-                let alert_debounce_seconds = settings_guard.alert_debounce_seconds;
                 drop(settings_guard);
 
-                // 获取 CPU 频率
-                let start_time = Instant::now();
+                // 获取频率数据
                 let frequencies = Self::get_frequencies(&frequency_mode).await;
-                let elapsed = start_time.elapsed();
-
-                // 如果采样时间超过了间隔时间的一半，记录警告
-                if elapsed.as_millis() as u64 > refresh_interval / 2 {
-                    warn!("CPU频率采样耗时较长: {}ms", elapsed.as_millis());
-                }
-
-                // 处理自动切换逻辑
-                if auto_switch_enabled && frequency_mode == "1" {
-                    Self::handle_auto_switch(
-                        &frequencies,
-                        &last_frequencies,
-                        auto_switch_threshold,
-                        &mut unchanged_count,
-                        &window,
-                        settings.clone(),
-                        state.clone(),
-                    )
-                    .await;
-                }
 
                 // 更新状态
-                {
-                    let mut state_guard = state.lock().await;
-                    state_guard.frequencies = frequencies.clone();
-                    state_guard.is_refreshing = true;
-                    state_guard.last_update_count = unchanged_count;
-
-                    if let Some(window) = &window {
-                        let _ = window.emit("monitor-state-updated", &*state_guard);
+                let mut state = state.lock().await;
+                state.frequencies = frequencies.clone();
+                
+                // 检查是否需要执行触发动作
+                if let Some(window) = &window {
+                    let settings = settings.lock().await;
+                    
+                    // 只有在总开关打开时才检查频率并执行动作
+                    if trigger_action_enabled {
+                        for (i, &freq) in frequencies.iter().enumerate() {
+                            let freq_ghz = freq as f64 / 1000.0;
+                            if freq_ghz > frequency_threshold {
+                                // 检查是否需要发送通知（防抖）
+                                let current_time = SystemTime::now()
+                                    .duration_since(UNIX_EPOCH)
+                                    .unwrap()
+                                    .as_secs();
+                                
+                                let mut last_alert = last_alert_time.lock().await;
+                                if current_time - *last_alert >= settings.alert_debounce_seconds {
+                                    *last_alert = current_time;
+                                    
+                                    // 执行触发动作
+                                    if let Ok(actions) = load_trigger_actions(window.app_handle().clone()).await {
+                                        for action in actions {
+                                            if action.enabled {
+                                                Self::execute_trigger_action(&action, window.app_handle().clone()).await;
+                                                break; // 只执行第一个启用的动作
+                                            }
+                                        }
+                                    }
+                                }
+                                break; // 找到一个超过阈值的就足够了
+                            }
+                        }
                     }
-                }
+                    drop(settings);
 
-                // 更新 last_frequencies
-                if !frequencies.is_empty() {
-                    last_frequencies = frequencies.clone();
+                    // 发送状态更新到前端
+                    let _ = window.emit("monitor-state-updated", &*state);
                 }
-
+                
                 // 检查频率阈值和触发动作
                 if let Some(window) = &window {
                     Self::check_frequency_threshold(
@@ -227,10 +217,13 @@ impl Monitor {
                         trigger_action_enabled,
                         window,
                         last_alert_time.clone(),
-                        alert_debounce_seconds,
+                        settings.lock().await.alert_debounce_seconds,
                     )
                     .await;
                 }
+
+                // 更新 last_frequencies
+                last_frequencies = frequencies.clone();
             }
             info!("监控器已停止");
         });
