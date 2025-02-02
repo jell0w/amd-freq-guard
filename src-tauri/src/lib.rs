@@ -16,6 +16,9 @@ use env_logger;
 use tauri::async_runtime;
 use serde_json::{self, json};
 use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
+use windows_sys::Win32::UI::WindowsAndMessaging::{SW_SHOW};
+use windows_sys::Win32::UI::Shell::ShellExecuteW;
+use std::os::windows::ffi::OsStrExt;
 
 // 在文件顶部添加模块声明
 mod power_plan;
@@ -231,17 +234,29 @@ async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("获取当前程序路径失败: {}", e))?;
     
-    let runas_result = std::process::Command::new("runas")
-        .arg("/user:Administrator")
-        .arg(current_exe.to_str().unwrap())
-        .spawn();
-
-    match runas_result {
-        Ok(_) => {
+    // 转换路径为宽字符串
+    let path = current_exe.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let operation = "runas\0".encode_utf16().collect::<Vec<_>>();
+    let params = "\0".encode_utf16().collect::<Vec<_>>();
+    
+    // 使用 ShellExecuteW 启动新进程
+    unsafe {
+        let result = ShellExecuteW(
+            0,                      // hwnd
+            operation.as_ptr(),     // operation ("runas")
+            path.as_ptr(),          // file
+            params.as_ptr(),        // parameters
+            std::ptr::null(),       // directory
+            SW_SHOW,               // show command
+        );
+        
+        if result > 32 {  // 成功
+            // 退出当前进程
             app.exit(0);
             Ok(())
+        } else {
+            Err(format!("启动失败，错误码: {}", result))
         }
-        Err(e) => Err(format!("请求管理员权限失败: {}", e))
     }
 }
 
