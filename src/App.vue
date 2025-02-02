@@ -13,6 +13,7 @@ import SelectButton from 'primevue/selectbutton';
 import Dialog from 'primevue/dialog';
 import Message from 'primevue/message';
 import { useToast } from 'primevue/usetoast';
+import { listen } from '@tauri-apps/api/event';
 const toast = useToast();
 
 const cpuFrequencies = ref([]);
@@ -20,26 +21,11 @@ const autoStart = ref(false);
 const autoMinimize = ref(false);
 const refreshInterval = ref(1000);
 const frequencyThreshold = ref(3.5);
-let timer = null;
-
-// 添加刷新状态
 const isRefreshing = ref(false);
-const indicatorStatus = ref('normal'); // 'normal', 'warning', 'danger'
-
-// 添加频率模式选项
-const frequencyModes = [
-  { label: 'SysInfo', value: 1, icon: 'pi pi-th-large', desc: '多核心检测' },
-  { label: 'CalcMhz', value: 2, icon: 'pi pi-stop', desc: '主频检测' }
-];
+const indicatorStatus = ref('normal');
 const frequencyMode = ref(1);
-
-// 添加加载状态
 const isLoading = ref(false);
-
-// 添加对话框控制
 const modeDialogVisible = ref(false);
-
-// 添加模式说明内容
 const modeDescriptions = {
   sysinfo: {
     title: 'SysInfo 模式',
@@ -66,21 +52,13 @@ const modeDescriptions = {
     ]
   }
 };
-
-// 修改自动切换相关的状态
 const autoSwitchEnabled = ref(false);
 const autoSwitchThreshold = ref(25);
 const unchangedCount = ref(0);
 const lastFrequencies = ref([]);
-const lastUpdateCount = ref(0);  // 添加这行，记录上次更新是在多少次之前
-
-// 添加新的状态
+const lastUpdateCount = ref(0);
 const triggerActionEnabled = ref(false);
-
-// 添加频率检测开关状态
 const frequencyDetectionEnabled = ref(true);
-
-// 修改 Settings 接口
 const defaultSettings = {
   auto_start: false,
   auto_minimize: false,
@@ -88,31 +66,63 @@ const defaultSettings = {
   frequency_threshold: 3.5,
   frequency_mode: "1",
   auto_switch_enabled: false,
-  auto_switch_threshold: 25
+  auto_switch_threshold: 25,
+  trigger_action_enabled: false,
+  frequency_detection_enabled: true,
+  alert_debounce_seconds: 15
 };
-
-// 添加触发动作列表状态
 const triggerActions = ref([]);
+const frequencyModes = [
+  { label: 'SysInfo', value: 1, icon: 'pi pi-th-large', desc: '多核心检测' },
+  { label: 'CalcMhz', value: 2, icon: 'pi pi-stop', desc: '主频检测' }
+];
 
-// 加载设置
+// 移除不必要的 ref
+const checkTimer = ref(null);
+const eventListeners = ref([]);
+
+const alertDebounceSeconds = ref(15);
+
 async function loadSettings() {
   try {
     const settings = await invoker('load_settings');
-    autoStart.value = settings.auto_start;
-    autoMinimize.value = settings.auto_minimize;
-    refreshInterval.value = settings.refresh_interval;
-    frequencyThreshold.value = settings.frequency_threshold;
-    frequencyMode.value = parseInt(settings.frequency_mode);
-    autoSwitchEnabled.value = settings.auto_switch_enabled;
-    autoSwitchThreshold.value = settings.auto_switch_threshold;
-    triggerActionEnabled.value = settings.trigger_action_enabled;
-    frequencyDetectionEnabled.value = settings.frequency_detection_enabled ?? true;  // 默认开启
+    console.log('加载的设置:', settings);
+    
+    // 使用 ?? 运算符确保有默认值
+    autoStart.value = settings.auto_start ?? defaultSettings.auto_start;
+    autoMinimize.value = settings.auto_minimize ?? defaultSettings.auto_minimize;
+    refreshInterval.value = settings.refresh_interval ?? defaultSettings.refresh_interval;
+    frequencyThreshold.value = settings.frequency_threshold ?? defaultSettings.frequency_threshold;
+    frequencyMode.value = parseInt(settings.frequency_mode ?? defaultSettings.frequency_mode);
+    autoSwitchEnabled.value = settings.auto_switch_enabled ?? defaultSettings.auto_switch_enabled;
+    autoSwitchThreshold.value = settings.auto_switch_threshold ?? defaultSettings.auto_switch_threshold;
+    triggerActionEnabled.value = settings.trigger_action_enabled ?? defaultSettings.trigger_action_enabled;
+    frequencyDetectionEnabled.value = settings.frequency_detection_enabled ?? defaultSettings.frequency_detection_enabled;
+    alertDebounceSeconds.value = settings.alert_debounce_seconds ?? defaultSettings.alert_debounce_seconds;
+
+    // 如果自动切换已启用，通知后端
+    if (autoSwitchEnabled.value) {
+      await invoker('update_auto_switch', {
+        enabled: autoSwitchEnabled.value,
+        threshold: autoSwitchThreshold.value
+      });
+    }
   } catch (e) {
     console.error('加载设置失败:', e);
+    // 使用默认值
+    autoStart.value = defaultSettings.auto_start;
+    autoMinimize.value = defaultSettings.auto_minimize;
+    refreshInterval.value = defaultSettings.refresh_interval;
+    frequencyThreshold.value = defaultSettings.frequency_threshold;
+    frequencyMode.value = parseInt(defaultSettings.frequency_mode);
+    autoSwitchEnabled.value = defaultSettings.auto_switch_enabled;
+    autoSwitchThreshold.value = defaultSettings.auto_switch_threshold;
+    triggerActionEnabled.value = defaultSettings.trigger_action_enabled;
+    frequencyDetectionEnabled.value = defaultSettings.frequency_detection_enabled;
+    alertDebounceSeconds.value = defaultSettings.alert_debounce_seconds;
   }
 }
 
-// 保存设置
 async function saveSettings() {
   try {
     const settings = {
@@ -124,147 +134,125 @@ async function saveSettings() {
       auto_switch_enabled: autoSwitchEnabled.value,
       auto_switch_threshold: autoSwitchThreshold.value,
       trigger_action_enabled: triggerActionEnabled.value,
-      frequency_detection_enabled: frequencyDetectionEnabled.value
+      frequency_detection_enabled: frequencyDetectionEnabled.value,
+      alert_debounce_seconds: alertDebounceSeconds.value,
     };
+    await invoker('update_monitor_settings', { settings });
     await invoker('save_settings', { settings });
   } catch (e) {
     console.error('保存设置失败:', e);
   }
 }
 
-// 检查频率是否超过阈值
-function checkFrequencyExceed(freq, index) {
-  const freqGHz = freq / 1000;
-  if (freqGHz > frequencyThreshold.value) {
-    // 调用 Rust 函数
-    invoker('trigger_clock_exceed', {
-      coreId: index,
-      frequency: freqGHz
-    });
+// 修改事件监听器设置函数
+async function setupEventListeners() {
+    // 清理旧的监听器
+    eventListeners.value.forEach(unlisten => unlisten());
+    eventListeners.value = [];
 
-    // 发送通知
-    showNotification(
-      '频率超限警告',
-      `CPU核心 ${index + 1} 频率 (${freqGHz.toFixed(2)} GHz) 超过阈值 ${frequencyThreshold.value} GHz`
-    );
-  }
-}
-
-// 修改频率模式变更处理
-async function handleModeChange() {
-  // 清空频率列表
-  cpuFrequencies.value = [];
-  // 保存设置
-  await saveSettings();
-  // 重新开始定时器
-  handleIntervalChange();
-}
-
-// 修改更新CPU频率函数
-async function updateCpuFrequencies() {
-  // 如果频率检测关闭，则不执行
-  if (!frequencyDetectionEnabled.value) {
-    return;
-  }
-
-  isRefreshing.value = true;
-  try {
-    if (frequencyMode.value === 1) {
-      const newFrequencies = await invoker("get_cpu_frequency_sysinfo");
-      
-      // 检查频率是否有变化
-      if (autoSwitchEnabled.value && autoSwitchThreshold.value > 0) {
-        const hasChanged = !lastFrequencies.value.length || 
-          newFrequencies.some((freq, i) => freq !== lastFrequencies.value[i]);
+    // 监听状态更新
+    const stateListener = await listen('monitor-state-updated', (event) => {
+        const state = event.payload;
         
-        if (!hasChanged) {
-          unchangedCount.value++;
-          lastUpdateCount.value = unchangedCount.value;  // 更新计数
-          if (unchangedCount.value >= autoSwitchThreshold.value) {
-            // 自动切换到 CalcMhz 模式
-            frequencyMode.value = 2;
+        // 先设置刷新状态为 true
+        isRefreshing.value = true;
+        
+        // 更新其他状态
+        cpuFrequencies.value = state.frequencies;
+        indicatorStatus.value = state.indicator_status;
+        
+        // 确保 last_update_count 的更新是即时的
+        lastUpdateCount.value = state.last_update_count;
+        
+        // 如果计数为 0，确保相关状态被重置
+        if (state.last_update_count === 0) {
             unchangedCount.value = 0;
-            lastUpdateCount.value = 0;
-            toast.add({
+            lastFrequencies.value = [...state.frequencies];
+        }
+
+        // 使用 setTimeout 而不是 requestAnimationFrame
+        setTimeout(() => {
+            isRefreshing.value = false;
+        }, 200);
+    });
+    eventListeners.value.push(stateListener);
+
+    // 监听模式切换
+    const modeListener = await listen('mode-switched', (event) => {
+      const { mode, auto_switch_disabled, unchanged_count } = event.payload;
+      frequencyMode.value = parseInt(mode);
+      lastUpdateCount.value = unchanged_count || 0;  // 更新计数
+      
+      if (auto_switch_disabled) {
+          autoSwitchEnabled.value = false;
+          autoSwitchThreshold.value = 0;
+          toast.add({
+              severity: 'info',
+              summary: '自动切换已禁用',
+              detail: '由于频率长时间未更新，已切换到 CalcMhz 模式并禁用自动切换功能',
+              life: 5000
+          });
+      } else {
+          toast.add({
               severity: 'info',
               summary: '模式已自动切换',
-              detail: '检测到频率长时间未更新，已切换到 CalcMhz 模式',
+              detail: '检测到频率长时间未更新，已临时切换到 CalcMhz 模式',
               life: 5000
-            });
-          }
-        } else {
-          unchangedCount.value = 0;
-          lastUpdateCount.value = 0;
-        }
-        lastFrequencies.value = [...newFrequencies];
+          });
       }
-      
-      cpuFrequencies.value = newFrequencies;
-    } else {
-      cpuFrequencies.value = await invoker("get_cpu_frequency_calcmhz");
-    }
-
-    // 检查超频状态
-    const exceededCount = cpuFrequencies.value.filter(freq => freq / 1000 > frequencyThreshold.value).length;
-    if (exceededCount === cpuFrequencies.value.length) {
-      indicatorStatus.value = 'danger';
-    } else if (exceededCount > 0) {
-      indicatorStatus.value = 'warning';
-    } else {
-      indicatorStatus.value = 'normal';
-    }
-
-    // 检查每个核心的频率
-    cpuFrequencies.value.forEach((freq, index) => {
-      checkFrequencyExceed(freq, index);
     });
-  } catch (error) {
-    console.error('获取CPU频率失败:', error);
-  } finally {
-    isLoading.value = false;
-    setTimeout(() => {
-      isRefreshing.value = false;
-    }, 100);
-  }
+    eventListeners.value.push(modeListener);
+
+    // 监听频率超限
+    const freqListener = await listen('frequency-exceeded', (event) => {
+      const { core, frequency, threshold } = event.payload;
+      showNotification(
+        '频率超限警告',
+        `CPU核心 ${core + 1} 频率 (${frequency.toFixed(2)} GHz) 超过阈值 ${threshold} GHz`
+      );
+    });
+    eventListeners.value.push(freqListener);
+
+    // 监听指示器状态变化
+    const indicatorListener = await listen('indicator-status-changed', (event) => {
+      indicatorStatus.value = event.payload;
+    });
+    eventListeners.value.push(indicatorListener);
+
+    // 监听模式切换事件
+    const modeChangeListener = await listen('mode-changed', () => {
+      // 清空频率数据
+      cpuFrequencies.value = [];
+      lastUpdateCount.value = 0;
+    });
+    eventListeners.value.push(modeChangeListener);
+
+    // 监听阈值超过事件
+    const thresholdListener = await listen('threshold-exceeded', (event) => {
+        const { exceeded_count, total_cores, exceeded_cores, threshold } = event.payload;
+        
+        // 构建详细信息
+        const details = exceeded_cores
+            .map(core => `核心 ${core.core + 1}: ${core.frequency.toFixed(2)} GHz`)
+            .join('\n');
+        
+        // 显示通知
+        toast.add({
+            severity: exceeded_count === total_cores ? 'error' : 'warn',
+            summary: `频率超限警告 (${exceeded_count}/${total_cores})`,
+            detail: `${exceeded_count} 个核心超过 ${threshold} GHz\n${details}`,
+            life: 5000,
+            sticky: exceeded_count === total_cores,  // 如果所有核心都超限，通知会保持显示
+        });
+    });
+    eventListeners.value.push(thresholdListener);
 }
 
-// 处理刷新间隔变化
-function handleIntervalChange(e) {
-  if (e && e.value && refreshInterval.value !== undefined) refreshInterval.value = e.value;
-  // console.log('handleIntervalChange', refreshInterval.value,e);
-  if (timer) {
-    clearInterval(timer);
-  }
-  const interval = Math.max(320, refreshInterval.value);
-  console.log('interval', interval);
-  timer = setInterval(updateCpuFrequencies, interval);
-  saveSettings();
-}
-
-// 处理自动切换开关变化
-function handleAutoSwitchChange() {
-  if (!autoSwitchEnabled.value) {
-    autoSwitchThreshold.value = 0;
-    unchangedCount.value = 0;
-    lastUpdateCount.value = 0;
-    lastFrequencies.value = [];
-  } else {
-    autoSwitchThreshold.value = 25;
-  }
-  saveSettings();
-}
-
-// 添加阈值变化处理函数
-function handleThresholdChange() {
-  saveSettings();
-}
-
-// 加载触发动作列表
 async function loadTriggerActions() {
   try {
     const actions = await invoker('load_trigger_actions');
     triggerActions.value = Array.isArray(actions) ? actions : [];
-    console.log('加载的触发动作:', triggerActions.value); // 添加日志
+    console.log('加载的触发动作:', triggerActions.value);
   } catch (error) {
     console.error('加载触发动作失败:', error);
     triggerActions.value = [];
@@ -272,21 +260,167 @@ async function loadTriggerActions() {
 }
 
 onMounted(async () => {
-  await loadSettings();
-  await loadTriggerActions();  // 加载触发动作列表
-  updateCpuFrequencies();
-  handleIntervalChange();
+    await loadSettings();
+    await loadTriggerActions();
+    await setupEventListeners();
+    
+    // 使用更长的间隔检查触发动作状态
+    checkTimer.value = setInterval(checkTriggerActionStatus, 10000);
 });
 
 onUnmounted(() => {
-  if (timer) {
-    clearInterval(timer);
-  }
+    // 清理计时器
+    if (checkTimer.value) {
+        clearInterval(checkTimer.value);
+        checkTimer.value = null;
+    }
+
+    // 清理所有事件监听器
+    eventListeners.value.forEach(unlisten => unlisten());
+    eventListeners.value = [];
 });
+
+// 修改刷新间隔处理函数
+async function handleIntervalChange() {
+  try {
+    // 先保存设置到文件
+    await saveSettings();
+    
+    // 再通知后端更新
+    await invoker('update_monitor_settings', {
+      settings: {
+        auto_start: autoStart.value,
+        auto_minimize: autoMinimize.value,
+        refresh_interval: refreshInterval.value,
+        frequency_threshold: frequencyThreshold.value,
+        frequency_mode: String(frequencyMode.value),
+        auto_switch_enabled: autoSwitchEnabled.value,
+        auto_switch_threshold: autoSwitchThreshold.value,
+        trigger_action_enabled: triggerActionEnabled.value,
+        frequency_detection_enabled: frequencyDetectionEnabled.value,
+        alert_debounce_seconds: alertDebounceSeconds.value,
+      }
+    });
+
+    toast.add({
+      severity: 'success',
+      summary: '设置已更新',
+      detail: `刷新间隔已更新为 ${refreshInterval.value} ms`,
+      life: 2000
+    });
+  } catch (error) {
+    console.error('更新刷新间隔失败:', error);
+    toast.add({
+      severity: 'error',
+      summary: '更新失败',
+      detail: '更新刷新间隔时发生错误',
+      life: 3000
+    });
+  }
+}
+
+// 修改频率阈值处理函数
+async function handleThresholdChange() {
+  try {
+    await saveSettings();
+    toast.add({
+      severity: 'success',
+      summary: '设置已更新',
+      detail: `频率阈值已更新为 ${frequencyThreshold.value} GHz`,
+      life: 2000
+    });
+  } catch (error) {
+    console.error('更新频率阈值失败:', error);
+    toast.add({
+      severity: 'error',
+      summary: '更新失败',
+      detail: '更新频率阈值时发生错误',
+      life: 3000
+    });
+  }
+}
+
+// 修改模式切换处理函数
+async function handleModeChange() {
+  try {
+    await invoker('update_frequency_mode', { mode: String(frequencyMode.value) });
+    await saveSettings();
+  } catch (error) {
+    console.error('切换模式失败:', error);
+  }
+}
+
+// 处理自动切换开关变化
+async function handleAutoSwitchChange() {
+  try {
+    if (!autoSwitchEnabled.value) {
+      autoSwitchThreshold.value = 0;
+    } else {
+      if (frequencyMode.value !== 1) {
+        frequencyMode.value = 1;
+        toast.add({
+          severity: 'info',
+          summary: '模式已切换',
+          detail: '已自动切换到 SysInfo 模式以启用自动切换功能',
+          life: 3000
+        });
+      }
+      autoSwitchThreshold.value = 25;
+    }
+    
+    await saveSettings();
+    
+    await invoker('update_auto_switch', { 
+      enabled: autoSwitchEnabled.value,
+      threshold: autoSwitchThreshold.value 
+    });
+
+    toast.add({
+      severity: 'success',
+      summary: '设置已更新',
+      detail: autoSwitchEnabled.value ? '已开启自动切换' : '已关闭自动切换',
+      life: 3000
+    });
+  } catch (error) {
+    console.error('更新自动切换设置失败:', error);
+    toast.add({
+      severity: 'error',
+      summary: '设置失败',
+      detail: '更新自动切换设置时发生错误',
+      life: 3000
+    });
+  }
+}
+
+// 修改频率检测开关处理函数
+async function handleFrequencyDetectionChange() {
+  try {
+    await saveSettings();
+  } catch (error) {
+    console.error('更新频率检测设置失败:', error);
+  }
+}
+
+async function checkTriggerActionStatus() {
+  try {
+    const hasActive = await invoker('check_active_trigger_action');
+    if (!hasActive && triggerActionEnabled.value) {
+      triggerActionEnabled.value = false;
+      toast.add({
+        severity: 'warn',
+        summary: '触发动作已禁用',
+        detail: '没有找到已启用的触发动作',
+        life: 3000
+      });
+      await saveSettings();
+    }
+  } catch (error) {
+    console.error('检查触发动作状态失败:', error);
+  }
+}
 </script>
 
 <template>
-  <!-- 添加回刷新指示器 -->
   <div class="refresh-indicator" :class="{
     'refreshing': isRefreshing,
     'warning': indicatorStatus === 'warning',
@@ -295,7 +429,6 @@ onUnmounted(() => {
 
   <div class="container">
     <div class="app-layout">
-      <!-- 左侧设置面板 -->
       <div class="settings-panel">
         <h2>设置</h2>
         <div class="action-buttons">
@@ -315,7 +448,7 @@ onUnmounted(() => {
               <div class="switch-header">
                 <span>频率检测</span>
                 <ToggleSwitch v-model="frequencyDetectionEnabled"
-                             @change="saveSettings" />
+                             @change="handleFrequencyDetectionChange" />
               </div>
               <p class="switch-desc">开启后将持续监控 CPU 频率变化</p>
             </div>
@@ -375,37 +508,54 @@ onUnmounted(() => {
               <InputNumber v-model="frequencyThreshold" :maxFractionDigits="3" suffix=" GHz" @input="handleThresholdChange" />
             </div>
           </div>
+
+          <div class="setting-item">
+            <label>报警防抖时间（秒）</label>
+            <InputNumber v-model="alertDebounceSeconds"
+                        :min="5"
+                        :max="300"
+                        @change="saveSettings"
+                        class="w-16" />
+          </div>
         </div>
 
         <div class="setting-group">
-          <!-- <div class="setting-group-title">频率获取模式</div> -->
           <div class="setting-item">
             <span>频率获取模式</span>
             <div class="mode-select-container">
-              <SelectButton :allowEmpty="false" v-model="frequencyMode" :options="frequencyModes" optionLabel="label" optionValue="value"
-                class="frequency-mode-select" @change="handleModeChange">
+              <SelectButton :allowEmpty="false" 
+                           v-model="frequencyMode" 
+                           :options="frequencyModes" 
+                           optionLabel="label" 
+                           optionValue="value"
+                           class="frequency-mode-select" 
+                           @change="handleModeChange">
                 <template #option="slotProps">
-                  <span v-tooltip.bottom="slotProps.option.desc" class="mode-label">{{ slotProps.option.label }}</span>
+                  <span v-tooltip.bottom="slotProps.option.desc" 
+                        class="mode-label">
+                    {{ slotProps.option.label }}
+                  </span>
                 </template>
               </SelectButton>
-              <Button icon="pi pi-question-circle" text rounded class="mode-help-button" severity="secondary"
-                @click="modeDialogVisible = true" />
+              <Button icon="pi pi-question-circle" 
+                      text 
+                      rounded 
+                      class="mode-help-button" 
+                      severity="secondary"
+                      @click="modeDialogVisible = true" />
             </div>
           </div>
         </div>
       </div>
 
-      <!-- 右侧CPU信息面板 -->
       <div class="monitoring-panel">
         <h1>CPU 频率监控</h1>
 
-        <!-- 加载中提示 -->
         <div v-if="isLoading" class="loading-container">
           <i class="pi pi-spin pi-spinner" style="font-size: 2rem"></i>
           <span>加载中...</span>
         </div>
 
-        <!-- SysInfo 模式的网格布局 -->
         <template v-if="frequencyDetectionEnabled">
           <div v-if="frequencyMode === 1">
             <div class="cpu-grid">
@@ -457,7 +607,6 @@ onUnmounted(() => {
             </Message>
           </div>
 
-          <!-- CalcMhz 模式的单卡片布局 -->
           <div v-else class="single-cpu-container">
             <Card v-if="cpuFrequencies.length > 0" :pt="{
               root: { class: cpuFrequencies[0] / 1000 > frequencyThreshold ? 'card-exceed' : 'card-normal' }
@@ -485,7 +634,6 @@ onUnmounted(() => {
     </div>
   </div>
 
-  <!-- 添加模式说明对话框 -->
   <Dialog v-model:visible="modeDialogVisible" modal header="频率获取模式说明" :style="{ width: '50rem' }"
     :breakpoints="{ '1199px': '75vw', '575px': '90vw' }">
     <div class="mode-info-container">
@@ -581,7 +729,6 @@ h2 {
   color: #fff;
 }
 
-/* 只对开关类设置项使用水平布局 */
 .setting-item:has(> .p-toggleswitch) {
   flex-direction: row;
   justify-content: space-between;
@@ -655,7 +802,6 @@ h2 {
   width: 100%;
 }
 
-/* 确保刷新指示器样式存在 */
 .refresh-indicator {
   position: fixed;
   top: 1rem;
@@ -665,20 +811,23 @@ h2 {
   border-radius: 50%;
   background-color: #00ffcc;
   opacity: 0.2;
-  transition: all 0.2s ease;
-  z-index: 1000;  /* 确保显示在最上层 */
+  transition: opacity 0.1s ease-in-out;
+  z-index: 1000;
 }
 
 .refresh-indicator.refreshing {
   opacity: 0.8;
+  box-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
 }
 
 .refresh-indicator.warning {
   background-color: #ffaa00;
+  box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
 }
 
 .refresh-indicator.danger {
   background-color: #ff4444;
+  box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
 }
 
 .mode-select-container {
@@ -694,7 +843,6 @@ h2 {
 .mode-help-button {
   padding: 0.5rem;
   margin-left: -0.5rem;
-  /* 让按钮更靠近 SelectButton */
 }
 
 .mode-help-button :deep(.p-button-icon) {
@@ -702,7 +850,6 @@ h2 {
   color: rgba(255, 255, 255, 0.5);
 }
 
-/* 调整 SelectButton 右侧边框圆角 */
 .frequency-mode-select :deep(.p-selectbutton .p-button:last-child) {
   border-top-right-radius: 6px;
   border-bottom-right-radius: 6px;
@@ -927,7 +1074,6 @@ h2 {
   opacity: 0.7;
 }
 
-/* 添加设置组标题 */
 .setting-group-title {
   font-size: 0.9rem;
   color: rgba(255, 255, 255, 0.7);
@@ -935,7 +1081,6 @@ h2 {
   font-weight: 500;
 }
 
-/* 优化滑块和输入框组合 */
 .interval-control {
   background: rgba(255, 255, 255, 0.03);
   border-radius: 6px;
@@ -1004,3 +1149,8 @@ h2 {
   font-size: 0.9rem;
 }
 </style>
+
+
+
+
+

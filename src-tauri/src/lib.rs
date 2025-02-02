@@ -8,9 +8,13 @@ use sysinfo::{CpuRefreshKind, System};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State,
+    Manager, State, WebviewWindow,
 };
 use std::fmt;
+use log::{info, warn, error};
+use env_logger;
+use tauri::async_runtime;
+use serde_json::{self, json};
 
 // 在文件顶部添加模块声明
 mod power_plan;
@@ -22,6 +26,15 @@ pub use trigger_action::{
     delete_trigger_action,
     load_trigger_actions,
 };
+
+mod monitor;
+pub use monitor::MONITOR;
+
+mod settings;
+pub use settings::Settings;
+
+mod notification;
+use notification::send_notification;
 
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
@@ -49,36 +62,6 @@ impl fmt::Display for FrequencyMode {
 impl Default for FrequencyMode {
     fn default() -> Self {
         FrequencyMode::SysInfo
-    }
-}
-
-// 修改设置结构体
-#[derive(Serialize, Deserialize, Clone)]
-struct Settings {
-    auto_start: bool,
-    auto_minimize: bool,
-    refresh_interval: u64,
-    frequency_threshold: f64,
-    frequency_mode: String,
-    auto_switch_enabled: bool,
-    auto_switch_threshold: u64,
-    trigger_action_enabled: bool,
-    frequency_detection_enabled: bool,  // 添加频率检测开关
-}
-
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            auto_start: false,
-            auto_minimize: false,
-            refresh_interval: 1000,
-            frequency_threshold: 3.5,
-            frequency_mode: FrequencyMode::default().to_string(),
-            auto_switch_enabled: false,
-            auto_switch_threshold: 25,
-            trigger_action_enabled: false,
-            frequency_detection_enabled: true,  // 默认开启
-        }
     }
 }
 
@@ -118,55 +101,46 @@ async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
     }
 
     // 读取并解析设置文件
-    let content = fs::read_to_string(settings_path).map_err(|e| e.to_string())?;
+    let content = fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
     
-    // 先解析为 serde_json::Value，这样我们可以处理缺失的字段
-    let stored_settings: serde_json::Value = serde_json::from_str(&content)
+    // 先尝试解析成 Value，这样我们可以检查和修复缺失的字段
+    let mut settings_value: serde_json::Value = serde_json::from_str(&content)
         .map_err(|e| format!("解析设置失败: {}", e))?;
     
     // 获取默认设置
     let default_settings = Settings::default();
     
-    // 构建完整的设置，使用存储的值或默认值
-    let settings = Settings {
-        auto_start: stored_settings.get("auto_start")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_settings.auto_start),
-            
-        auto_minimize: stored_settings.get("auto_minimize")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_settings.auto_minimize),
-            
-        refresh_interval: stored_settings.get("refresh_interval")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(default_settings.refresh_interval),
-            
-        frequency_threshold: stored_settings.get("frequency_threshold")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(default_settings.frequency_threshold),
-            
-        frequency_mode: stored_settings.get("frequency_mode")
-            .and_then(|v| v.as_str())
-            .unwrap_or(&default_settings.frequency_mode)
-            .to_string(),
-            
-        auto_switch_enabled: stored_settings.get("auto_switch_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_settings.auto_switch_enabled),
-            
-        auto_switch_threshold: stored_settings.get("auto_switch_threshold")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(default_settings.auto_switch_threshold),
-            
-        trigger_action_enabled: stored_settings.get("trigger_action_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_settings.trigger_action_enabled),
-            
-        frequency_detection_enabled: stored_settings.get("frequency_detection_enabled")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(default_settings.frequency_detection_enabled),
-    };
+    // 检查并添加缺失的字段
+    if let Some(obj) = settings_value.as_object_mut() {
+        // 检查所有可能缺失的字段
+        let fields = [
+            ("auto_start", json!(default_settings.auto_start)),
+            ("auto_minimize", json!(default_settings.auto_minimize)),
+            ("refresh_interval", json!(default_settings.refresh_interval)),
+            ("frequency_threshold", json!(default_settings.frequency_threshold)),
+            ("frequency_mode", json!(default_settings.frequency_mode)),
+            ("auto_switch_enabled", json!(default_settings.auto_switch_enabled)),
+            ("auto_switch_threshold", json!(default_settings.auto_switch_threshold)),
+            ("trigger_action_enabled", json!(default_settings.trigger_action_enabled)),
+            ("frequency_detection_enabled", json!(default_settings.frequency_detection_enabled)),
+            ("alert_debounce_seconds", json!(default_settings.alert_debounce_seconds)),
+        ];
 
+        for (key, default_value) in fields.iter() {
+            if !obj.contains_key(*key) {
+                obj.insert(key.to_string(), default_value.clone());
+            }
+        }
+    }
+
+    // 将修复后的值转换为 Settings
+    let settings: Settings = serde_json::from_value(settings_value)
+        .map_err(|e| format!("转换设置失败: {}", e))?;
+    
+    // 保存修复后的设置
+    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
+    fs::write(&settings_path, json).map_err(|e| e.to_string())?;
+    
     Ok(settings)
 }
 
@@ -184,7 +158,7 @@ async fn get_cpu_frequency_calcmhz() -> Result<Vec<u64>, String> {
 
 // 修改原有的频率获取函数名称以区分
 #[tauri::command]
-fn get_cpu_frequency_sysinfo(state: State<SystemState>) -> Vec<u64> {
+fn get_cpu_frequency_sysinfo(_state: State<SystemState>) -> Vec<u64> {
     let mut sys = System::new_all();
     sys.refresh_all();
     sys.cpus().iter().map(|cpu| cpu.frequency()).collect()
@@ -211,8 +185,35 @@ pub use power_plan::{
     import_power_plan_command, rename_power_plan_command,
 };
 
+// 添加缺失的命令
+#[tauri::command]
+async fn update_monitor_settings(settings: Settings) -> Result<(), String> {
+    MONITOR.update_settings(settings).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn check_active_trigger_action(window: tauri::WebviewWindow) -> Result<bool, String> {
+    Ok(MONITOR.has_active_trigger_action(&window).await)
+}
+
+#[tauri::command]
+async fn update_frequency_mode(mode: String) -> Result<(), String> {
+    MONITOR.update_frequency_mode(mode).await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn update_auto_switch(enabled: bool, threshold: u64) -> Result<(), String> {
+    MONITOR.update_auto_switch(enabled, threshold).await;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // 初始化日志
+    env_logger::init();
+
     let system = SystemState(Mutex::new(System::new()));
 
     tauri::Builder::default()
@@ -222,6 +223,15 @@ pub fn run() {
             // 获取主窗口
             let window = app.get_webview_window("main").unwrap();
             let window_clone = window.clone();
+
+            // 设置监控器的窗口并启动监控
+            {
+                let mut monitor = MONITOR.clone();
+                monitor.set_window(window.clone());
+                tauri::async_runtime::spawn(async move {
+                    monitor.start().await;
+                });
+            }
 
             // 处理窗口关闭事件
             window.on_window_event(move |event| {
@@ -296,6 +306,10 @@ pub fn run() {
             save_trigger_action,
             delete_trigger_action,
             load_trigger_actions,
+            update_monitor_settings,
+            check_active_trigger_action,
+            update_frequency_mode,
+            update_auto_switch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

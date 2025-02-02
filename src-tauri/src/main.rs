@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    amd_freq_guard_lib::run()
+    amd_freq_guard_lib::run();
 }
