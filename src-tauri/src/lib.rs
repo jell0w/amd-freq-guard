@@ -15,6 +15,7 @@ use log::{info, warn, error};
 use env_logger;
 use tauri::async_runtime;
 use serde_json::{self, json};
+use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
 
 // 在文件顶部添加模块声明
 mod power_plan;
@@ -215,6 +216,35 @@ async fn refresh_frequencies() -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn check_admin_privileges() -> bool {
+    unsafe {
+        // IsUserAnAdmin() != 0
+        let is_admin = IsUserAnAdmin();
+        info!("is_under_admin_privileges: {}", is_admin);
+        is_admin != 0
+    }
+}
+
+#[tauri::command]
+async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("获取当前程序路径失败: {}", e))?;
+    
+    let runas_result = std::process::Command::new("runas")
+        .arg("/user:Administrator")
+        .arg(current_exe.to_str().unwrap())
+        .spawn();
+
+    match runas_result {
+        Ok(_) => {
+            app.exit(0);
+            Ok(())
+        }
+        Err(e) => Err(format!("请求管理员权限失败: {}", e))
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志
@@ -317,6 +347,8 @@ pub fn run() {
             update_frequency_mode,
             update_auto_switch,
             refresh_frequencies,
+            check_admin_privileges,
+            request_admin_privileges,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
