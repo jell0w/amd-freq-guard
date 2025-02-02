@@ -5,7 +5,7 @@ use crate::settings::Settings;
 use crate::trigger_action::TriggerAction;
 use crate::power_plan::set_active_plan;
 use log::{info, warn, error};
-use tokio::time::{Duration, interval as tokio_interval};
+use tokio::time::{Duration, interval as tokio_interval, Instant};
 use sysinfo::System;
 use calcmhz;
 use serde_json::json;
@@ -15,6 +15,7 @@ use tauri::Emitter;
 use crate::notification::send_notification;
 use tauri::AppHandle;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::fs;
 
 #[derive(Clone, Serialize)]
 pub struct MonitorState {
@@ -56,7 +57,25 @@ impl Monitor {
     }
 
     pub fn set_window(&mut self, window: WebviewWindow) {
-        self.window = Some(window);
+        self.window = Some(window.clone());
+        
+        // 在设置窗口时初始化监控器的设置
+        let window_clone = window.clone();
+        let settings_clone = self.settings.clone();
+        
+        tauri::async_runtime::spawn(async move {
+            // 从文件加载设置
+            let settings_path = window_clone.app_handle().path().app_data_dir().unwrap().join("settings.json");
+            if settings_path.exists() {
+                if let Ok(content) = fs::read_to_string(&settings_path) {
+                    if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
+                        let mut current_settings = settings_clone.lock().await;
+                        *current_settings = settings;
+                        info!("已从文件加载设置");
+                    }
+                }
+            }
+        });
     }
 
     pub async fn update_settings(&self, new_settings: Settings) {
@@ -121,7 +140,10 @@ impl Monitor {
                 let settings = settings.lock().await;
                 settings.refresh_interval
             };
+            
             let mut interval = tokio_interval(Duration::from_millis(current_interval));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            
             let mut last_frequencies = Vec::new();
             let mut unchanged_count = 0;
 
@@ -138,6 +160,7 @@ impl Monitor {
                 if current_interval != settings_guard.refresh_interval {
                     current_interval = settings_guard.refresh_interval;
                     interval = tokio_interval(Duration::from_millis(current_interval));
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
                     info!("刷新间隔已更新: {} ms", current_interval);
                 }
 
@@ -151,7 +174,14 @@ impl Monitor {
                 drop(settings_guard);
 
                 // 获取 CPU 频率
+                let start_time = Instant::now();
                 let frequencies = Self::get_frequencies(&frequency_mode).await;
+                let elapsed = start_time.elapsed();
+
+                // 如果采样时间超过了间隔时间的一半，记录警告
+                if elapsed.as_millis() as u64 > refresh_interval / 2 {
+                    warn!("CPU频率采样耗时较长: {}ms", elapsed.as_millis());
+                }
 
                 // 处理自动切换逻辑
                 if auto_switch_enabled && frequency_mode == "1" {
@@ -376,6 +406,12 @@ impl Monitor {
                 // 检查是否需要自动切换
                 if *unchanged_count >= threshold {
                     info!("触发自动切换到 CalcMhz 模式");
+
+                    send_notification(
+                        &window.app_handle(),
+                        "疑似 SysInfo 模式失效",
+                        &format!("已自动切换到 CalcMhz 模式")
+                    );
                     
                     // 更新设置
                     let mut settings_guard = settings.lock().await;
@@ -400,11 +436,11 @@ impl Monitor {
         info!("开始执行触发动作: {}", action.name);
         
         // 发送开始执行的通知
-        send_notification(
-            &app_handle,
-            "触发动作开始执行",
-            &format!("正在执行触发动作: {}", action.name)
-        );
+        // send_notification(
+        //     &app_handle,
+        //     "触发动作开始执行",
+        //     &format!("正在执行触发动作: {}", action.name)
+        // );
         
         // 切换到临时计划
         if let Err(e) = set_active_plan(&action.temp_plan_guid) {
@@ -527,6 +563,33 @@ impl Monitor {
             }
             
             info!("自动切换状态改变，重置计数器");
+        }
+    }
+
+    pub async fn refresh_now(&self) {
+        let settings = self.settings.lock().await;
+        let frequency_mode = settings.frequency_mode.clone();
+        drop(settings);
+
+        // 立即获取一次频率
+        let frequencies = Self::get_frequencies(&frequency_mode).await;
+        
+        // 更新状态
+        if let Some(window) = &self.window {
+            let mut state = self.state.lock().await;
+            state.frequencies = frequencies;
+            state.is_refreshing = true;
+            let _ = window.emit("monitor-state-updated", &*state);
+            
+            // 使用短延迟重置刷新状态
+            let window_clone = window.clone();
+            let state_clone = self.state.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let mut state = state_clone.lock().await;
+                state.is_refreshing = false;
+                let _ = window_clone.emit("monitor-state-updated", &*state);
+            });
         }
     }
 }

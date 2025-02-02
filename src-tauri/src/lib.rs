@@ -209,6 +209,12 @@ async fn update_auto_switch(enabled: bool, threshold: u64) -> Result<(), String>
     Ok(())
 }
 
+#[tauri::command]
+async fn refresh_frequencies() -> Result<(), String> {
+    MONITOR.refresh_now().await;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志
@@ -310,6 +316,7 @@ pub fn run() {
             check_active_trigger_action,
             update_frequency_mode,
             update_auto_switch,
+            refresh_frequencies,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

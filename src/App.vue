@@ -14,6 +14,7 @@ import Dialog from 'primevue/dialog';
 import Message from 'primevue/message';
 import { useToast } from 'primevue/usetoast';
 import { listen } from '@tauri-apps/api/event';
+import Skeleton from 'primevue/skeleton';
 const toast = useToast();
 
 const cpuFrequencies = ref([]);
@@ -88,38 +89,40 @@ async function loadSettings() {
     const settings = await invoker('load_settings');
     console.log('加载的设置:', settings);
     
-    // 使用 ?? 运算符确保有默认值
+    // 先设置模式，这样可以确保界面正确显示
+    frequencyMode.value = parseInt(settings.frequency_mode ?? defaultSettings.frequency_mode);
+    
+    // 然后设置其他值
     autoStart.value = settings.auto_start ?? defaultSettings.auto_start;
     autoMinimize.value = settings.auto_minimize ?? defaultSettings.auto_minimize;
     refreshInterval.value = settings.refresh_interval ?? defaultSettings.refresh_interval;
     frequencyThreshold.value = settings.frequency_threshold ?? defaultSettings.frequency_threshold;
-    frequencyMode.value = parseInt(settings.frequency_mode ?? defaultSettings.frequency_mode);
     autoSwitchEnabled.value = settings.auto_switch_enabled ?? defaultSettings.auto_switch_enabled;
     autoSwitchThreshold.value = settings.auto_switch_threshold ?? defaultSettings.auto_switch_threshold;
     triggerActionEnabled.value = settings.trigger_action_enabled ?? defaultSettings.trigger_action_enabled;
     frequencyDetectionEnabled.value = settings.frequency_detection_enabled ?? defaultSettings.frequency_detection_enabled;
     alertDebounceSeconds.value = settings.alert_debounce_seconds ?? defaultSettings.alert_debounce_seconds;
 
-    // 如果自动切换已启用，通知后端
-    if (autoSwitchEnabled.value) {
-      await invoker('update_auto_switch', {
-        enabled: autoSwitchEnabled.value,
-        threshold: autoSwitchThreshold.value
-      });
-    }
+    // 确保后端也使用正确的设置
+    await invoker('update_monitor_settings', { settings });
   } catch (e) {
     console.error('加载设置失败:', e);
     // 使用默认值
+    frequencyMode.value = parseInt(defaultSettings.frequency_mode);
     autoStart.value = defaultSettings.auto_start;
     autoMinimize.value = defaultSettings.auto_minimize;
     refreshInterval.value = defaultSettings.refresh_interval;
     frequencyThreshold.value = defaultSettings.frequency_threshold;
-    frequencyMode.value = parseInt(defaultSettings.frequency_mode);
     autoSwitchEnabled.value = defaultSettings.auto_switch_enabled;
     autoSwitchThreshold.value = defaultSettings.auto_switch_threshold;
     triggerActionEnabled.value = defaultSettings.trigger_action_enabled;
     frequencyDetectionEnabled.value = defaultSettings.frequency_detection_enabled;
     alertDebounceSeconds.value = defaultSettings.alert_debounce_seconds;
+
+    // 即使加载失败也要确保后端使用默认设置
+    await invoker('update_monitor_settings', { settings: defaultSettings }).catch(err => {
+      console.error('更新后端设置失败:', err);
+    });
   }
 }
 
@@ -343,10 +346,24 @@ async function handleThresholdChange() {
 // 修改模式切换处理函数
 async function handleModeChange() {
   try {
+    // 先清空频率列表
+    cpuFrequencies.value = [];
+    
+    // 通知后端切换模式
     await invoker('update_frequency_mode', { mode: String(frequencyMode.value) });
+    
+    // 立即执行一次频率获取
+    await invoker('refresh_frequencies');
+    
     await saveSettings();
   } catch (error) {
     console.error('切换模式失败:', error);
+    toast.add({
+      severity: 'error',
+      summary: '切换失败',
+      detail: '切换频率获取模式时发生错误',
+      life: 3000
+    });
   }
 }
 
@@ -474,11 +491,11 @@ async function checkTriggerActionStatus() {
           <div class="setting-group-title">基本设置</div>
           <div class="setting-item">
             <span>开机自启</span>
-            <ToggleSwitch v-model="autoStart" @change="saveSettings" />
+            <ToggleSwitch disabled v-model="autoStart" @change="saveSettings" />
           </div>
           <div class="setting-item">
             <span>自启时最小化</span>
-            <ToggleSwitch v-model="autoMinimize" @change="saveSettings" />
+            <ToggleSwitch disabled v-model="autoMinimize" @change="saveSettings" />
           </div>
         </div>
 
@@ -495,7 +512,7 @@ async function checkTriggerActionStatus() {
                      @change="handleIntervalChange" />
               <InputNumber v-model="refreshInterval" 
                           :min="320" 
-                          suffix=" ms" 
+                          suffix=" 毫秒"
                           @change="handleIntervalChange" />
             </div>
           </div>
@@ -510,12 +527,15 @@ async function checkTriggerActionStatus() {
           </div>
 
           <div class="setting-item">
-            <label>报警防抖时间（秒）</label>
+            <span>报警防抖时间</span>
+            <div class="interval-control">
             <InputNumber v-model="alertDebounceSeconds"
                         :min="5"
                         :max="300"
                         @change="saveSettings"
+                        suffix=" 秒"
                         class="w-16" />
+                      </div>
           </div>
         </div>
 
@@ -548,7 +568,15 @@ async function checkTriggerActionStatus() {
         </div>
       </div>
 
-      <div class="monitoring-panel">
+      <div v-if="cpuFrequencies.length === 0" class="monitoring-panel">
+            <Skeleton height="20px" width="120px" />
+            <div class="cpu-grid">
+              <Skeleton height="100px" width="120px" v-for="i in 10" :key="i" />
+
+            </div>
+          </div>
+
+      <div v-else class="monitoring-panel">
         <h1>CPU 频率监控</h1>
 
         <div v-if="isLoading" class="loading-container">
@@ -736,6 +764,7 @@ h2 {
 }
 
 .cpu-grid {
+  margin-top: 1rem;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
   gap: 0.5rem;
