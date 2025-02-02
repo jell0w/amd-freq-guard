@@ -9,6 +9,8 @@
     "core:default",
     "notification:default",
     "dialog:default",
-    "dialog:default"
+    "dialog:default",
+    "shell:default",
+    "shell:default"
   ]
 }

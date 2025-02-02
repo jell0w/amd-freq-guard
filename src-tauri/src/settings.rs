@@ -1,4 +1,4 @@
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Settings {
@@ -29,4 +29,4 @@ impl Default for Settings {
             alert_debounce_seconds: 15,
         }
     }
-} 
+}

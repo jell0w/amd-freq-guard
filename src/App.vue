@@ -435,6 +435,20 @@ async function checkTriggerActionStatus() {
     console.error('检查触发动作状态失败:', error);
   }
 }
+
+async function openExternalLink(url) {
+  try {
+    await invoker('open_external_link', { url });
+  } catch (error) {
+    console.error('打开链接失败:', error);
+    toast.add({
+      severity: 'error',
+      summary: '打开失败',
+      detail: '无法打开外部链接',
+      life: 3000
+    });
+  }
+}
 </script>
 
 <template>
@@ -566,6 +580,12 @@ async function checkTriggerActionStatus() {
             </div>
           </div>
         </div>
+
+        <!-- 添加一个pi-github图标按钮，点击后跳转到https://github.com/jell0w/amd-freq-guard -->
+        <Button icon="pi pi-github" 
+                variant="text"
+                severity="secondary"
+                @click="() => openExternalLink('https://github.com/jell0w/amd-freq-guard')" />
       </div>
 
       <div v-if="cpuFrequencies.length === 0" class="monitoring-panel">

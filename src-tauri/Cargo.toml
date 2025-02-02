@@ -1,8 +1,8 @@
 [package]
 name = "amd-freq-guard"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "检测处理器频率以及自动切换电源计划"
+authors = ["jellow"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -34,3 +34,4 @@ log = "0.4"
 env_logger = "0.10"
 lazy_static = "1.4"
 windows-sys = {version = "0.48",features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
+tauri-plugin-shell = "2"

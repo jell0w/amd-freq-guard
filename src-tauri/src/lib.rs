@@ -1,35 +1,33 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use calcmhz;
+use env_logger;
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
+use serde_json::{self, json};
+use std::fmt;
+use std::os::windows::ffi::OsStrExt;
 use std::thread;
 use std::time::Duration;
 use std::{fs, path::PathBuf, process::Command, sync::Mutex};
 use sysinfo::{CpuRefreshKind, System};
+// use tauri::api::shell;
+use tauri::async_runtime;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, State, WebviewWindow,
 };
-use std::fmt;
-use log::{info, warn, error};
-use env_logger;
-use tauri::async_runtime;
-use serde_json::{self, json};
+use tauri_plugin_shell::ShellExt;
 use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
-use windows_sys::Win32::UI::WindowsAndMessaging::{SW_SHOW};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
-use std::os::windows::ffi::OsStrExt;
+use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
 
 // 在文件顶部添加模块声明
 mod power_plan;
 use power_plan::{get_power_plans, set_active_plan, PowerPlan};
 
 mod trigger_action;
-pub use trigger_action::{
-    save_trigger_action,
-    delete_trigger_action,
-    load_trigger_actions,
-};
+pub use trigger_action::{delete_trigger_action, load_trigger_actions, save_trigger_action};
 
 mod monitor;
 pub use monitor::MONITOR;
@@ -106,14 +104,14 @@ async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
 
     // 读取并解析设置文件
     let content = fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
-    
+
     // 先尝试解析成 Value，这样我们可以检查和修复缺失的字段
-    let mut settings_value: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("解析设置失败: {}", e))?;
-    
+    let mut settings_value: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| format!("解析设置失败: {}", e))?;
+
     // 获取默认设置
     let default_settings = Settings::default();
-    
+
     // 检查并添加缺失的字段
     if let Some(obj) = settings_value.as_object_mut() {
         // 检查所有可能缺失的字段
@@ -121,13 +119,31 @@ async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
             ("auto_start", json!(default_settings.auto_start)),
             ("auto_minimize", json!(default_settings.auto_minimize)),
             ("refresh_interval", json!(default_settings.refresh_interval)),
-            ("frequency_threshold", json!(default_settings.frequency_threshold)),
+            (
+                "frequency_threshold",
+                json!(default_settings.frequency_threshold),
+            ),
             ("frequency_mode", json!(default_settings.frequency_mode)),
-            ("auto_switch_enabled", json!(default_settings.auto_switch_enabled)),
-            ("auto_switch_threshold", json!(default_settings.auto_switch_threshold)),
-            ("trigger_action_enabled", json!(default_settings.trigger_action_enabled)),
-            ("frequency_detection_enabled", json!(default_settings.frequency_detection_enabled)),
-            ("alert_debounce_seconds", json!(default_settings.alert_debounce_seconds)),
+            (
+                "auto_switch_enabled",
+                json!(default_settings.auto_switch_enabled),
+            ),
+            (
+                "auto_switch_threshold",
+                json!(default_settings.auto_switch_threshold),
+            ),
+            (
+                "trigger_action_enabled",
+                json!(default_settings.trigger_action_enabled),
+            ),
+            (
+                "frequency_detection_enabled",
+                json!(default_settings.frequency_detection_enabled),
+            ),
+            (
+                "alert_debounce_seconds",
+                json!(default_settings.alert_debounce_seconds),
+            ),
         ];
 
         for (key, default_value) in fields.iter() {
@@ -138,13 +154,13 @@ async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
     }
 
     // 将修复后的值转换为 Settings
-    let settings: Settings = serde_json::from_value(settings_value)
-        .map_err(|e| format!("转换设置失败: {}", e))?;
-    
+    let settings: Settings =
+        serde_json::from_value(settings_value).map_err(|e| format!("转换设置失败: {}", e))?;
+
     // 保存修复后的设置
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(&settings_path, json).map_err(|e| e.to_string())?;
-    
+
     Ok(settings)
 }
 
@@ -231,31 +247,59 @@ fn check_admin_privileges() -> bool {
 
 #[tauri::command]
 async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("获取当前程序路径失败: {}", e))?;
-    
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {}", e))?;
+
     // 转换路径为宽字符串
-    let path = current_exe.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let path = current_exe
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
     let operation = "runas\0".encode_utf16().collect::<Vec<_>>();
     let params = "\0".encode_utf16().collect::<Vec<_>>();
-    
+
     // 使用 ShellExecuteW 启动新进程
     unsafe {
         let result = ShellExecuteW(
-            0,                      // hwnd
-            operation.as_ptr(),     // operation ("runas")
-            path.as_ptr(),          // file
-            params.as_ptr(),        // parameters
-            std::ptr::null(),       // directory
-            SW_SHOW,               // show command
+            0,                  // hwnd
+            operation.as_ptr(), // operation ("runas")
+            path.as_ptr(),      // file
+            params.as_ptr(),    // parameters
+            std::ptr::null(),   // directory
+            SW_SHOW,            // show command
         );
-        
-        if result > 32 {  // 成功
+
+        if result > 32 {
+            // 成功
             // 退出当前进程
             app.exit(0);
             Ok(())
         } else {
             Err(format!("启动失败，错误码: {}", result))
+        }
+    }
+}
+
+#[tauri::command]
+async fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), String> {
+    let url_wide: Vec<u16> = format!("{}\0", url).encode_utf16().collect();
+    let operation = "open\0".encode_utf16().collect::<Vec<u16>>();
+    
+    unsafe {
+        let result = ShellExecuteW(
+            0,                  // hwnd
+            operation.as_ptr(), // operation
+            url_wide.as_ptr(), // file
+            std::ptr::null(),  // parameters
+            std::ptr::null(),  // directory
+            SW_SHOW,           // show command
+        );
+
+        if result > 32 {
+            Ok(())
+        } else {
+            Err(format!("打开链接失败，错误码: {}", result))
         }
     }
 }
@@ -268,6 +312,7 @@ pub fn run() {
     let system = SystemState(Mutex::new(System::new()));
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -364,6 +409,7 @@ pub fn run() {
             refresh_frequencies,
             check_admin_privileges,
             request_admin_privileges,
+            open_external_link,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
