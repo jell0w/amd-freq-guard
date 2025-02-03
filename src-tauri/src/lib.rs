@@ -20,7 +20,10 @@ use tauri::{
 use tauri_plugin_shell::ShellExt;
 use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
-use windows_sys::Win32::UI::WindowsAndMessaging::SW_SHOW;
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    FindWindowW, ShowWindow, SetForegroundWindow, PostMessageW,
+    SW_SHOW, IsWindow, WM_CLOSE
+};
 
 // 在文件顶部添加模块声明
 mod power_plan;
@@ -37,6 +40,9 @@ pub use settings::Settings;
 
 mod notification;
 use notification::send_notification;
+
+mod autostart;
+use autostart::{setup_autostart, enable_autostart, disable_autostart};
 
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
@@ -247,32 +253,25 @@ fn check_admin_privileges() -> bool {
 
 #[tauri::command]
 async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
-    let current_exe =
-        std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {}", e))?;
+    let current_exe = std::env::current_exe()
+        .map_err(|e| format!("获取当前程序路径失败: {}", e))?;
 
-    // 转换路径为宽字符串
-    let path = current_exe
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect::<Vec<_>>();
-    let operation = "runas\0".encode_utf16().collect::<Vec<_>>();
-    let params = "\0".encode_utf16().collect::<Vec<_>>();
+    // 添加管理员重启参数
+    let params = "--admin-restart\0".encode_utf16().collect::<Vec<u16>>();
+    let path = current_exe.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let operation = "runas\0".encode_utf16().collect::<Vec<u16>>();
 
-    // 使用 ShellExecuteW 启动新进程
     unsafe {
         let result = ShellExecuteW(
             0,                  // hwnd
             operation.as_ptr(), // operation ("runas")
             path.as_ptr(),      // file
-            params.as_ptr(),    // parameters
+            params.as_ptr(),    // parameters (添加了重启参数)
             std::ptr::null(),   // directory
-            SW_SHOW,            // show command
+            SW_SHOW,           // show command
         );
 
         if result > 32 {
-            // 成功
-            // 退出当前进程
             app.exit(0);
             Ok(())
         } else {
@@ -304,21 +303,92 @@ async fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), St
     }
 }
 
+#[tauri::command]
+async fn toggle_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), String> {
+    if enabled {
+        let exe_path = std::env::current_exe()
+            .map_err(|e| format!("获取程序路径失败: {}", e))?
+            .to_string_lossy()
+            .to_string();
+        
+        setup_autostart(exe_path)?;
+        enable_autostart()?;
+    } else {
+        disable_autostart()?;
+    }
+    Ok(())
+}
+
+// 添加新的命令行参数处理
+use std::env;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志
-    env_logger::init();
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
+
+    // 检查命令行参数，看是否是管理员重启
+    let args: Vec<String> = env::args().collect();
+    let is_admin_restart = args.len() > 1 && args[1] == "--admin-restart";
 
     let system = SystemState(Mutex::new(System::new()));
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    let is_autostart = args.iter().any(|arg| arg == "--autostart");
+    
+    // 添加单实例插件
+    #[cfg(desktop)]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(move |app_handle, argv, cwd| {
+            info!("检测到新实例启动，参数: {:?}, 工作目录: {:?}", argv, cwd);
+            
+            if let Some(window) = app_handle.get_webview_window("main") {
+                // 确保窗口可见
+                let _ = window.unminimize();
+                let _ = window.show();
+                // 设置焦点
+                let _ = window.set_focus();
+                
+                // 如果窗口被最小化了，恢复它
+                if let Ok(true) = window.is_minimized() {
+                    let _ = window.unminimize();
+                }
+                
+                info!("已激活现有窗口");
+            }
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
-        .setup(|app| {
+        .setup(move |app| {
             // 获取主窗口
             let window = app.get_webview_window("main").unwrap();
             let window_clone = window.clone();
+
+            // 读取设置
+            let settings_path = get_settings_path(app.handle());
+            let auto_minimize = if settings_path.exists() {
+                if let Ok(content) = fs::read_to_string(&settings_path) {
+                    if let Ok(settings) = serde_json::from_str::<Settings>(&content) {
+                        settings.auto_minimize
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            // 如果不是自动启动或者未开启自动隐藏，则显示窗口
+            if !is_autostart || !auto_minimize {
+                window.show().unwrap();
+            }
 
             // 设置监控器的窗口并启动监控
             {
@@ -410,6 +480,7 @@ pub fn run() {
             check_admin_privileges,
             request_admin_privileges,
             open_external_link,
+            toggle_autostart,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

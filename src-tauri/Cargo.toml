@@ -35,3 +35,7 @@ env_logger = "0.10"
 lazy_static = "1.4"
 windows-sys = {version = "0.48",features = ["Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 tauri-plugin-shell = "2"
+clap = "4.5.13"
+whoami = "1.5.1"
+planif = { git = "https://github.com/hanaTsuk1/planif" }
+tauri-plugin-single-instance = "2.2.1"

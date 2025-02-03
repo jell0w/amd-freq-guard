@@ -11,6 +11,9 @@
     "dialog:default",
     "dialog:default",
     "shell:default",
-    "shell:default"
+    "shell:default",
+    "autostart:allow-enable",
+    "autostart:allow-disable",
+    "autostart:allow-is-enabled"
   ]
 }

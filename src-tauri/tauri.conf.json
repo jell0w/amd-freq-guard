@@ -14,7 +14,11 @@
       {
         "title": "AMDFreqGuard",
         "width": 900,
-        "height": 600
+        "height": 600,
+        "visible": false,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true
       }
     ],
     "security": {
