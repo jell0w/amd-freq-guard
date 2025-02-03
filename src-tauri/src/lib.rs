@@ -8,7 +8,7 @@ use std::fmt;
 use std::os::windows::ffi::OsStrExt;
 use std::thread;
 use std::time::Duration;
-use std::{fs, path::PathBuf, process::Command, sync::Mutex};
+use std::{fs, path::{PathBuf, Path}, process::Command, sync::Mutex};
 use sysinfo::{CpuRefreshKind, System};
 // use tauri::api::shell;
 use tauri::async_runtime;
@@ -73,8 +73,14 @@ impl Default for FrequencyMode {
     }
 }
 
+use std::env;
+
 fn get_settings_path(app: &tauri::AppHandle) -> PathBuf {
-    let mut path = app.path().app_data_dir().unwrap();
+    let mut path = env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     path.push("settings.json");
     path
 }
@@ -319,8 +325,6 @@ async fn toggle_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), St
     Ok(())
 }
 
-// 添加新的命令行参数处理
-use std::env;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

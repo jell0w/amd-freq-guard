@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
+use std::env;
+use std::path::Path;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TriggerAction {
@@ -13,7 +15,11 @@ pub struct TriggerAction {
 }
 
 fn get_actions_path(app: &AppHandle) -> PathBuf {
-    let mut path = app.path().app_data_dir().unwrap();
+    let mut path = env::current_exe()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .to_path_buf();
     path.push("trigger_actions.json");
     path
 }
