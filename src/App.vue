@@ -15,6 +15,7 @@ import Message from 'primevue/message';
 import { useToast } from 'primevue/usetoast';
 import { listen } from '@tauri-apps/api/event';
 import Skeleton from 'primevue/skeleton';
+import { getVersion } from '@tauri-apps/api/app';
 
 //引入lodash做防抖
 import { debounce } from 'lodash';
@@ -273,8 +274,10 @@ onMounted(async () => {
   await loadTriggerActions();
   await setupEventListeners();
 
+  console.log('版本号:', await getVersion());
+
   // 使用更长的间隔检查触发动作状态
-  checkTimer.value = setInterval(checkTriggerActionStatus, 10000);
+  // checkTimer.value = setInterval(checkTriggerActionStatus, 10000);
 });
 
 onUnmounted(() => {

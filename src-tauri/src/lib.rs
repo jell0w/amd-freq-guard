@@ -382,6 +382,11 @@ pub fn run() {
             let window = app.get_webview_window("main").unwrap();
             let window_clone = window.clone();
 
+            // 设置窗口标题，包含版本号
+            let version = app.package_info().version.to_string();
+            let title = format!("AMDFreqGuard Version:{}", version);
+            window.set_title(&title).unwrap();
+
             // 读取设置
             let settings_path = get_settings_path(app.handle());
             let auto_minimize = if settings_path.exists() {
