@@ -91,15 +91,24 @@ fn get_settings_path(app: &tauri::AppHandle) -> PathBuf {
 // }
 
 #[tauri::command]
-async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
-    let settings_path = get_settings_path(&app);
+async fn save_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
+    // 如果是自动切换导致的保存，保持原有的频率检测模式
+    if MONITOR.is_mode_auto_switched().await {
+        // 读取文件中的旧设置
+        if let Ok(content) = fs::read_to_string(get_settings_path(&app)) {
+            if let Ok(old_settings) = serde_json::from_str::<Settings>(&content) {
+                settings.frequency_mode = old_settings.frequency_mode;
+            }
+        }
+    }
 
+    let settings_path = get_settings_path(&app);
+    
     // 确保目录存在
     if let Some(parent) = settings_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
 
-    // 将设置序列化为JSON并保存到文件
     let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
     fs::write(settings_path, json).map_err(|e| e.to_string())?;
     Ok(())

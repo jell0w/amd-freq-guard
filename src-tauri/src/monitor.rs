@@ -43,6 +43,7 @@ pub struct Monitor {
     running: Arc<tokio::sync::RwLock<bool>>,
     window: Option<WebviewWindow>,
     last_alert_time: Arc<Mutex<u64>>,
+    mode_auto_switched: Arc<Mutex<bool>>,
 }
 
 impl Monitor {
@@ -53,6 +54,7 @@ impl Monitor {
             running: Arc::new(tokio::sync::RwLock::new(false)),
             window: None,
             last_alert_time: Arc::new(Mutex::new(0)),
+            mode_auto_switched: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -129,6 +131,7 @@ impl Monitor {
         let running = self.running.clone();
         let window = self.window.clone();
         let last_alert_time = self.last_alert_time.clone();
+        let monitor = self.clone();
 
         tokio::spawn(async move {
             let mut interval_timer = {
@@ -199,6 +202,7 @@ impl Monitor {
                         settings.auto_switch_threshold
                     };
                     if unchanged_count >= threshold {
+                        monitor.set_mode_auto_switched(true).await;
                         info!("触发自动切换到 CalcMhz 模式");
                         if let Some(window) = &window {
                             send_notification(
@@ -475,6 +479,7 @@ impl Monitor {
     }
 
     pub async fn update_frequency_mode(&self, mode: String) {
+        self.set_mode_auto_switched(false).await;
         // 先获取旧的模式
         let old_mode = {
             let settings = self.settings.lock().await;
@@ -585,6 +590,15 @@ impl Monitor {
                 let _ = window_clone.emit("monitor-state-updated", &*state);
             });
         }
+    }
+
+    pub async fn set_mode_auto_switched(&self, switched: bool) {
+        let mut flag = self.mode_auto_switched.lock().await;
+        *flag = switched;
+    }
+
+    pub async fn is_mode_auto_switched(&self) -> bool {
+        *self.mode_auto_switched.lock().await
     }
 }
 
