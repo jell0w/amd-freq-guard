@@ -4,6 +4,9 @@ use std::process::Command;
 use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
+use crate::PowerPlanUtils::PowerPlanController::PowerPlanController;
+
+
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -13,32 +16,46 @@ pub struct PowerPlan {
     pub is_active: bool,
 }
 
+// pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
+//     let output = Command::new("powercfg")
+//         .args(["/list"])
+//         .creation_flags(CREATE_NO_WINDOW)
+//         .output()
+//         .map_err(|e| format!("执行命令失败: {}", e))?;
+
+//     // 使用 GBK 解码
+//     let (cow, _encoding_used, had_errors) = GBK.decode(&output.stdout);
+//     if had_errors {
+//         return Err("GBK 解码失败".to_string());
+//     }
+//     let output_str = cow.into_owned();
+
+//     // println!("原始输出:\n{}", output_str);
+
+//     let plans = parse_power_plans(&output_str)?;
+
+//     // println!("解析结果:");
+//     // for plan in &plans {
+//     //     println!("GUID: {}", plan.guid);
+//     //     println!("名称: {}", plan.name);
+//     //     println!("是否活动: {}", plan.is_active);
+//     //     println!("---");
+//     // }
+
+//     Ok(plans)
+// }
+
 pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
-    let output = Command::new("powercfg")
-        .args(["/list"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| format!("执行命令失败: {}", e))?;
-
-    // 使用 GBK 解码
-    let (cow, _encoding_used, had_errors) = GBK.decode(&output.stdout);
-    if had_errors {
-        return Err("GBK 解码失败".to_string());
-    }
-    let output_str = cow.into_owned();
-
-    // println!("原始输出:\n{}", output_str);
-
-    let plans = parse_power_plans(&output_str)?;
-
-    // println!("解析结果:");
-    // for plan in &plans {
-    //     println!("GUID: {}", plan.guid);
-    //     println!("名称: {}", plan.name);
-    //     println!("是否活动: {}", plan.is_active);
-    //     println!("---");
-    // }
-
+    //这里使用了转化主要是抛弃了powercfg的获取方式，改为使用windows api获取
+    let raw_plans = PowerPlanController::list_plans()?;
+    let plans = raw_plans
+        .into_iter()
+        .map(|p| PowerPlan {
+            guid: format!("{:?}", p.uuid), // 使用 Debug 格式化 GUID
+            name: p.name,
+            is_active: p.is_active,
+        })
+        .collect();
     Ok(plans)
 }
 
@@ -226,6 +243,8 @@ pub async fn delete_power_plan_command(guid: String) -> Result<(), String> {
 pub async fn rename_power_plan_command(guid: String, new_name: String) -> Result<(), String> {
     rename_power_plan(&guid, &new_name)
 }
+
+
 
 // 导出电源计划
 pub fn export_power_plan(guid: &str, file_path: &str) -> Result<(), String> {

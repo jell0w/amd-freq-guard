@@ -50,6 +50,8 @@ use updater::check_update;
 mod constants;
 use constants::get_constants;
 
+mod PowerPlanUtils;
+
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
 
