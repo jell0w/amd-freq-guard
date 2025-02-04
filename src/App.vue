@@ -132,6 +132,7 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
+  // console.log('保存设置');
   try {
     const settings = {
       auto_start: autoStart.value,
@@ -670,7 +671,7 @@ async function handleAutoStartChange() {
                   <div v-if="autoSwitchEnabled" class="auto-switch-details">
                     <div class="threshold-control">
                       <span>在连续</span>
-                      <InputNumber v-model="autoSwitchThreshold" :min="20" :max="1000" />
+                      <InputNumber v-model="autoSwitchThreshold" :min="20" :max="1000" @update:modelValue="saveSettings" />
                       <span>次未更新后切换</span>
                     </div>
                     <div v-if="lastUpdateCount > 0" class="update-status">
