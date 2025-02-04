@@ -3,6 +3,7 @@ use std::{fs, path::PathBuf};
 use tauri::{AppHandle, Manager};
 use std::env;
 use std::path::Path;
+use uuid;
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct TriggerAction {
@@ -12,6 +13,21 @@ pub struct TriggerAction {
     pub target_plan_guid: String, // 目标计划 B 的 GUID
     pub pause_seconds: u32,       // 停顿时间（秒）
     pub enabled: bool,            // 是否启用
+    pub version: String,          // 添加版本字段
+}
+
+impl Default for TriggerAction {
+    fn default() -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            name: String::new(),
+            temp_plan_guid: String::new(),
+            target_plan_guid: String::new(),
+            pause_seconds: 30,
+            enabled: true,
+            version: "simple".to_string(), // 默认为简单版本
+        }
+    }
 }
 
 fn get_actions_path(app: &AppHandle) -> PathBuf {

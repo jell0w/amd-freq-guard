@@ -438,6 +438,7 @@ impl Monitor {
     }
 
     async fn execute_trigger_action(action: &TriggerAction, app_handle: AppHandle) {
+        // if(action.version == "1.0.0"){
         info!("开始执行触发动作: {}", action.name);
 
         // 发送开始执行的通知
