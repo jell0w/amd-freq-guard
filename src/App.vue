@@ -16,7 +16,7 @@ import { useToast } from 'primevue/usetoast';
 import { listen } from '@tauri-apps/api/event';
 import Skeleton from 'primevue/skeleton';
 import { getVersion } from '@tauri-apps/api/app';
-
+import { getGithubRepoURL } from './utils/Constants';
 //引入lodash做防抖
 import { debounce } from 'lodash';
 
@@ -33,6 +33,7 @@ const indicatorStatus = ref('normal');
 const frequencyMode = ref(1);
 const isLoading = ref(false);
 const modeDialogVisible = ref(false);
+const hasNewVersion = ref(null);
 const modeDescriptions = {
   sysinfo: {
     title: 'SysInfo 模式',
@@ -89,6 +90,8 @@ const checkTimer = ref(null);
 const eventListeners = ref([]);
 
 const alertDebounceSeconds = ref(15);
+
+const isCheckingUpdate = ref(false);
 
 async function loadSettings() {
   try {
@@ -270,11 +273,12 @@ async function loadTriggerActions() {
 }
 
 onMounted(async () => {
+  checkUpdate(true, true, true);
   await loadSettings();
   await loadTriggerActions();
   await setupEventListeners();
 
-  console.log('版本号:', await getVersion());
+  console.log('当前版本号:', await getVersion());
 
   // 使用更长的间隔检查触发动作状态
   // checkTimer.value = setInterval(checkTriggerActionStatus, 10000);
@@ -500,6 +504,69 @@ async function handleAutoStartChange() {
 
   }
 }
+
+async function checkUpdate(ignoreError = false, ignoreEqual = false, ignoreNewVersion = false) {
+  isCheckingUpdate.value = true;
+  try {
+    const updateInfo = await invoker('check_update');
+    console.log({ updateInfo })
+    if (!updateInfo.is_success) {
+      if (!ignoreError) {
+        toast.add({
+          severity: 'error',
+          summary: '检查更新失败',
+          detail: updateInfo.message,
+          life: 3000
+        });
+      }
+
+      hasNewVersion.value = null;
+      return;
+    }
+
+    if (updateInfo.has_update) {
+      //为链接
+      hasNewVersion.value = updateInfo.download_url;
+      if (ignoreNewVersion) return
+      toast.add({
+        severity: 'info',
+        summary: '发现新版本',
+        detail: `新版本 ${updateInfo.latest_version} 已发布`,
+        life: 30000,
+        closable: true
+      });
+
+    } else {
+      hasNewVersion.value = null;
+      if (!ignoreEqual) {
+        toast.add({
+          severity: 'success',
+          summary: '检查完成',
+          detail: '当前已是最新版本',
+          life: 3000
+        });
+      }
+    }
+  } catch (error) {
+    hasNewVersion.value = null;
+    if (!ignoreError) {
+      toast.add({
+        severity: 'error',
+        summary: '检查更新出错',
+        detail: error.toString(),
+        life: 3000
+      });
+    }
+  } finally {
+    isCheckingUpdate.value = false;
+  }
+}
+
+async function openGithub() {
+  const url = await getGithubRepoURL();
+  console.log({ url })
+  await openExternalLink(url);
+}
 </script>
 
 <template>
@@ -512,7 +579,11 @@ async function handleAutoStartChange() {
   <div class="container">
     <div class="app-layout">
       <div class="settings-panel">
-        <h2>设置</h2>
+        <div style="display: flex;align-items: center;justify-content: space-between;">
+          <h2>设置</h2>
+          <Button v-if="hasNewVersion" label="有版本更新" size="small" severity="secondary" variant="outlined"
+            icon="pi pi-arrow-circle-up" @click="openExternalLink(hasNewVersion)" />
+        </div>
         <div class="action-buttons">
           <Button label="触发动作管理" icon="pi pi-bolt" style="width: 100%;" @click="$router.push('/trigger-action')" />
           <Button label="电源计划管理" icon="pi pi-cog" style="width: 100%;" @click="$router.push('/power-plan')" />
@@ -617,9 +688,13 @@ async function handleAutoStartChange() {
           </div>
         </div>
 
-        <!-- 添加一个pi-github图标按钮，点击后跳转到https://github.com/jell0w/amd-freq-guard -->
-        <Button icon="pi pi-github" variant="text" severity="secondary"
-          @click="() => openExternalLink('https://github.com/jell0w/amd-freq-guard')" />
+        <div class="setting-group">
+          <div class="about-links">
+            <Button icon="pi pi-refresh" severity="secondary" :loading="isCheckingUpdate" @click="checkUpdate()"
+              label="检查更新" />
+            <Button icon="pi pi-github" text severity="secondary" @click="openGithub" />
+          </div>
+        </div>
       </div>
 
       <div v-if="!frequencyDetectionEnabled" class="detection-disabled">
@@ -674,7 +749,8 @@ async function handleAutoStartChange() {
                   <div v-if="autoSwitchEnabled" class="auto-switch-details">
                     <div class="threshold-control">
                       <span>在连续</span>
-                      <InputNumber v-model="autoSwitchThreshold" :min="20" :max="1000" @update:modelValue="saveSettings" />
+                      <InputNumber v-model="autoSwitchThreshold" :min="20" :max="1000"
+                        @update:modelValue="saveSettings" />
                       <span>次未更新后切换</span>
                     </div>
                     <div v-if="lastUpdateCount > 0" class="update-status">
@@ -1222,6 +1298,12 @@ h2 {
 .detection-disabled p {
   margin: 0;
   font-size: 0.9rem;
+}
+
+.about-links {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
 }
 </style>
 

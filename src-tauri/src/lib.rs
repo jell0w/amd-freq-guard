@@ -44,6 +44,12 @@ use notification::send_notification;
 mod autostart;
 use autostart::{setup_autostart, enable_autostart, disable_autostart};
 
+mod updater;
+use updater::check_update;
+
+mod constants;
+use constants::get_constants;
+
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
 
@@ -499,6 +505,8 @@ pub fn run() {
             request_admin_privileges,
             open_external_link,
             toggle_autostart,
+            check_update,
+            get_constants,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
