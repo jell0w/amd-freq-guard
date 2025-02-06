@@ -27,7 +27,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 
 // 在文件顶部添加模块声明
 mod power_plan;
-use power_plan::{get_power_plans, set_active_plan, PowerPlan};
+use power_plan::{get_power_plans, set_active_plan, PowerPlan,get_power_plans_json_by_scheme_guid};
 
 mod trigger_action;
 pub use trigger_action::{delete_trigger_action, load_trigger_actions, save_trigger_action};
@@ -51,6 +51,11 @@ mod constants;
 use constants::get_constants;
 
 mod PowerPlanUtils;
+use PowerPlanUtils::GetPowerPlans::write_value_set;
+
+// 添加新模块
+mod power_settings_preferences_store;
+use power_settings_preferences_store::{toggle_power_setting_liked, get_liked_power_settings};
 
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
@@ -224,6 +229,11 @@ fn get_power_plans_command() -> Result<Vec<PowerPlan>, String> {
 }
 
 #[tauri::command]
+fn get_power_plans_json_by_scheme_guid_command(guid: &str) -> Result<String, String> {
+    get_power_plans_json_by_scheme_guid(guid)
+}
+
+#[tauri::command]
 fn set_active_plan_command(guid: String) -> Result<(), String> {
     set_active_plan(&guid)
 }
@@ -342,6 +352,11 @@ async fn toggle_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), St
     Ok(())
 }
 
+#[tauri::command]
+async fn write_value_set_command(guid: &str, subgroup_guid: &str, setting_guid: &str, ac_value: u32, dc_value: u32) -> Result<(), String> {
+    info!("write_value_set_command: guid: {}, subgroup_guid: {}, setting_guid: {}, ac_value: {}, dc_value: {}", guid, subgroup_guid, setting_guid, ac_value, dc_value);
+    write_value_set(guid, subgroup_guid, setting_guid, ac_value, dc_value)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -509,6 +524,10 @@ pub fn run() {
             toggle_autostart,
             check_update,
             get_constants,
+            get_power_plans_json_by_scheme_guid_command,
+            toggle_power_setting_liked,
+            get_liked_power_settings,
+            write_value_set_command,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

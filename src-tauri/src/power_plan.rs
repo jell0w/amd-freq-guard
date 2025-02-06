@@ -1,7 +1,7 @@
 use encoding_rs::GBK;
 use serde::{Deserialize, Serialize};
 use std::process::Command;
-use uuid::Uuid;
+// use uuid::Uuid;
 use std::os::windows::process::CommandExt;
 
 use crate::PowerPlanUtils::PowerPlanController::PowerPlanController;
@@ -47,6 +47,7 @@ pub struct PowerPlan {
 
 pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
     //这里使用了转化主要是抛弃了powercfg的获取方式，改为使用windows api获取
+    //说实话我觉得用powercfg更直觉，但是考虑到powercfg是分割文本的，感觉受环境影响比较大，所以还是使用windows api获取
     let raw_plans = PowerPlanController::list_plans()?;
     let plans = raw_plans
         .into_iter()
@@ -59,7 +60,12 @@ pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
     Ok(plans)
 }
 
+pub fn get_power_plans_json_by_scheme_guid(guid: &str)->Result<String,String>{
+    PowerPlanController::get_power_plans_json_by_scheme_guid(guid)
+}
+
 pub fn set_active_plan(guid: &str) -> Result<(), String> {
+    //这种不需要处理输出的，直接使用powercfg设置
     let output = Command::new("powercfg")
         .args(["/setactive", guid])
         .creation_flags(CREATE_NO_WINDOW)

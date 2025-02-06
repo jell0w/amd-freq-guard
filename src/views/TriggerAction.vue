@@ -72,7 +72,6 @@ function showEditDialog(action = null) {
     actionForm.value = { ...action };
   } else {
     actionForm.value = {
-      id: uuidv4(),
       name: '',
       temp_plan_guid: '',
       target_plan_guid: '',
@@ -85,7 +84,7 @@ function showEditDialog(action = null) {
 
 // 获取计划名称的辅助函数
 function getPlanName(guid) {
-  const plan = powerPlans.value?.find(p => p.guid === guid);
+  const plan = powerPlans.value?.find(p => p.guid.toLowerCase() === guid.toLowerCase());
   return plan ? plan.name : '未知计划';
 }
 
@@ -94,6 +93,8 @@ async function saveAction() {
   if (!actionForm.value.name) {
     return;  // 添加表单验证
   }
+
+  actionForm.value.id = uuidv4();
   
   try {
     // 如果当前动作要被启用，先禁用其他动作
@@ -274,8 +275,12 @@ onMounted(async () => {
     <Dialog v-model:visible="editDialog"
             :header="actionForm.id ? '编辑动作' : '新建动作'"
             modal
+            :style="{ width: '80%',
+              maxWidth: '500px'
+             }"
             class="action-dialog">
       <div class="action-form">
+        <Message severity="secondary" v-if="!actionForm.id">在动作被触发时，先会切换到一个临时的电源计划，再等待指定时间后切换到目标计划。这么做的目的是达到一个强制刷新的效果</Message>
         <div class="form-field">
           <label>动作名称</label>
           <InputText v-model="actionForm.name" class="w-full" />
@@ -423,6 +428,7 @@ h1 {
   color: rgba(255, 255, 255, 0.7);
   font-size: 0.9rem;
 }
+
 
 :deep(.action-dialog) {
   max-width: 500px;

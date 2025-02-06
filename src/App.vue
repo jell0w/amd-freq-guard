@@ -508,6 +508,10 @@ async function handleAutoStartChange() {
 async function checkUpdate(ignoreError = false, ignoreEqual = false, ignoreNewVersion = false) {
   isCheckingUpdate.value = true;
   try {
+    // const jsonSchema = await invoker("get_power_plans_json_by_scheme_guid_command",{
+    //   guid:"8bd00add-abf1-47cf-98b4-0e38e7999415"
+    // })
+    // console.log("jsonSchema",JSON.parse(jsonSchema))
     const updateInfo = await invoker('check_update');
     console.log({ updateInfo })
     if (!updateInfo.is_success) {
