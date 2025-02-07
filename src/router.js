@@ -18,12 +18,6 @@ const routes = [
   },
   {
     path: '/',
-    name: 'Home',
-    component: App,
-    meta: { requiresAdmin: true }
-  },
-  {
-    path: '/',
     component: MainLayout,
     children: [
       {
@@ -31,7 +25,8 @@ const routes = [
         name: 'home',
         component: () => import('./App.vue'),
         meta: {
-          keepAlive: true
+          keepAlive: true,
+          requiresAdmin: true
         }
       },
       {

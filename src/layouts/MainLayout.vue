@@ -28,6 +28,5 @@ const router = useRouter();
 <style scoped>
 .layout-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
 }
 </style> 

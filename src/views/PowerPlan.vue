@@ -461,14 +461,14 @@ onMounted(() => {
       <Card v-for="plan in powerPlans" :key="plan.guid" :pt="{
         root: { class: ['plan-card', { active: plan.is_active }] }
       }">
-        <template #header>
+        <!-- <template #header>
           <div class="card-header">
             <div class="plan-status" v-if="plan.is_active">
               <i class="pi pi-check-circle status-icon"></i>
               <span class="status-text">当前活动</span>
             </div>
           </div>
-        </template>
+        </template> -->
         <template #content>
           <div class="plan-content">
             <div class="plan-info">
@@ -519,6 +519,7 @@ onMounted(() => {
           <div class="settings-menu">
             <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 1rem;">
               <SelectButton v-model="currentDisplayMode" 
+              :allowEmpty="false"
                            :options="displayModes" 
                            optionLabel="label"
                            optionValue="value"
@@ -533,13 +534,10 @@ onMounted(() => {
             <PanelMenu :model="settingsMenu" class="w-full" />
           </div>
 
-
-
-
           <!-- 右侧设置区域 -->
           <div class="settings-content">
             <template v-if="selectedSetting">
-              <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <div class="setting-header">
                 <h3>{{ selectedSetting.setting.name }}</h3>
                 <Button 
                   :icon="isSettingLiked(selectedSetting) ? 'pi pi-star-fill' : 'pi pi-star'" 
@@ -551,81 +549,71 @@ onMounted(() => {
                 />
               </div>
 
-
-              <Message style="margin-top: 1rem;" severity="warn" v-if="selectedSetting.attributes === 1">这是隐藏的设置，可能Windows系统不希望你修改，若你真的需要修改，请谨慎操作</Message>
-              <!-- 根据设置类型显示不同的控制器 -->
               <div class="setting-control">
+                <Message severity="warn" v-if="selectedSetting.attributes === 1">
+                  这是隐藏的设置，可能Windows系统不希望你修改，若你真的需要修改，请谨慎操作
+                </Message>
+                
                 <template v-if="selectedSetting.possible_values.setting_type === 'Range'">
-                  <!-- <Slider v-model="selectedSetting.current_value.value" 
-                         :min="selectedSetting.possible_values.data[0].value"
-                         :max="selectedSetting.possible_values.data[1].value"
-                         :step="1" />
-                  <span class="unit" v-if="selectedSetting.possible_values.unit">
-                    {{ selectedSetting.possible_values.unit }}
-                  </span> -->
+                  <div class="setting-field">
+                    <div class="setting-field-label">
+                      <label>交流电(AC)时</label>
+                    </div>
+                    <InputNumber v-model="editingSettingValue.ac_value"
+                      :min="getMaxOrMinValue(selectedSetting, 'min')" 
+                      :max="getMaxOrMinValue(selectedSetting, 'max')"
+                      :step="1" 
+                      :suffix="selectedSetting.possible_values.unit" />
+                  </div>
 
-                  <label class="font-bold block mb-2">
-                    交流电(AC)时
-                  </label>
-                  <!-- <Slider v-model="selectedSetting.current_value.ac_value"
-                    :min="getMaxOrMinValue(selectedSetting, 'min')" :max="getMaxOrMinValue(selectedSetting, 'max')"
-                    :step="1" class="custom-slider" @change="handleIntervalChange" /> -->
-
-                  <InputNumber v-model="editingSettingValue.ac_value"
-                    :min="getMaxOrMinValue(selectedSetting, 'min')" :max="getMaxOrMinValue(selectedSetting, 'max')"
-                    :step="1" :suffix="selectedSetting.possible_values.unit" />
-
-                  <label class="font-bold block mb-2">
-                    电池(DC)时
-                  </label>
-                  <!-- <Slider v-model="selectedSetting.current_value.dc_value"
-                    :min="getMaxOrMinValue(selectedSetting, 'min')" :max="getMaxOrMinValue(selectedSetting, 'max')"
-                    :step="1" class="custom-slider" @change="handleIntervalChange" /> -->
-
-                  <InputNumber v-model="editingSettingValue.dc_value"
-                    :min="getMaxOrMinValue(selectedSetting, 'min')" :max="getMaxOrMinValue(selectedSetting, 'max')"
-                    :step="1" :suffix="selectedSetting.possible_values.unit" />
+                  <div class="setting-field">
+                    <div class="setting-field-label">
+                      <label>电池(DC)时</label>
+                    </div>
+                    <InputNumber v-model="editingSettingValue.dc_value"
+                      :min="getMaxOrMinValue(selectedSetting, 'min')" 
+                      :max="getMaxOrMinValue(selectedSetting, 'max')"
+                      :step="1" 
+                      :suffix="selectedSetting.possible_values.unit" />
+                  </div>
                 </template>
-
-
 
                 <template v-else>
-                  <!-- <Dropdown v-model="selectedSetting.current_value.value" :options="selectedSetting.possible_values.data"
-                    optionLabel="name" optionValue="value" class="w-full" /> -->
-                  <label class="font-bold block mb-2">
-                    交流电(AC)时
-                  </label>
-                  <Select v-model="editingSettingValue.ac_value" 
-                         :options="selectedSetting.possible_values.data"
-                         optionLabel="name" 
-                         optionValue="value" 
-                         class="w-full" />
-                  <label class="font-bold block mb-2">
-                    电池(DC)时
+                  <div class="setting-field">
+                    <div class="setting-field-label">
+                      <label>交流电(AC)时</label>
+                    </div>
+                    <Select v-model="editingSettingValue.ac_value" 
+                      :options="selectedSetting.possible_values.data"
+                      optionLabel="name" 
+                      optionValue="value" 
+                      class="w-full" />
+                  </div>
 
-                  </label>
-                  <Select v-model="editingSettingValue.dc_value" 
-                         :options="selectedSetting.possible_values.data"
-                         optionLabel="name" 
-                         optionValue="value" 
-                         class="w-full" />
-
-
+                  <div class="setting-field">
+                    <div class="setting-field-label">
+                      <label>电池(DC)时</label>
+                    </div>
+                    <Select v-model="editingSettingValue.dc_value" 
+                      :options="selectedSetting.possible_values.data"
+                      optionLabel="name" 
+                      optionValue="value" 
+                      class="w-full" />
+                  </div>
                 </template>
 
-                <Message v-if="hasUnsavedChanges">
-                  你的修改需要保存才会生效，离开此页面后你的更改将会丢失
-                </Message>
-
-                <!-- 添加保存按钮 -->
-                <Button
-                        label="保存修改" 
-                        icon="pi pi-save"
-                        severity="success"
-                        @click="saveSettingChanges" />
+                <div class="setting-actions">
+                  <Message v-if="hasUnsavedChanges">
+                    你的修改需要保存才会生效，离开此页面后你的更改将会丢失
+                  </Message>
+                  <Button
+                    label="保存修改" 
+                    icon="pi pi-save"
+                    severity="success"
+                    @click="saveSettingChanges" />
+                </div>
               </div>
             </template>
-
 
             <div v-else class="no-setting-selected">
               请从左侧选择要编辑的设置项
@@ -655,14 +643,9 @@ onMounted(() => {
   gap: 1rem;
 }
 
-.back-button {
-  color: #fff;
-}
-
 h1 {
   margin: 0;
   font-size: 1.5rem;
-  color: #fff;
 }
 
 .plans-list {
@@ -674,30 +657,29 @@ h1 {
 }
 
 .plan-card {
-  background: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: var(--card-bg);
+  border: 1px solid var(--outline-color);
+  box-shadow: var(--card-shadow);
   transition: all 0.2s ease;
+  border-radius: 8px;
+  padding: 0.75rem;
 }
 
 .plan-card:hover {
   transform: translateY(-2px);
-  background: rgba(255, 255, 255, 0.08) !important;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .plan-card.active {
-  background: rgba(0, 255, 204, 0.05) !important;
-  border-color: rgba(0, 255, 204, 0.2) !important;
-}
-
-.card-header {
-  display: none;
+  border-color: var(--green-400);
+  background: var(--green-50);
 }
 
 .plan-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  min-height: 2.5rem;
+  min-height: 2rem;
 }
 
 .plan-info {
@@ -707,33 +689,25 @@ h1 {
 }
 
 .plan-name {
-  color: #fff;
   font-size: 1rem;
   font-weight: 500;
   line-height: 1.2;
-}
-
-.custom-slider {
-  width: 100%;
+  margin-bottom: 0.15rem;
 }
 
 .plan-guid {
-  color: #888;
   font-size: 0.65rem;
   font-family: monospace;
+  opacity: 0.6;
+  line-height: 1;
 }
-
 
 .active-status {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #00ffcc;
-  font-size: 0.8rem;
-}
-
-.active-status i {
-  font-size: 0.9rem;
+  font-size: 0.75rem;
+  color: var(--green-500);
 }
 
 .card-actions {
@@ -742,150 +716,26 @@ h1 {
   gap: 0.5rem;
 }
 
-.card-actions :deep(.p-button) {
-  padding: 0.4rem 0.8rem;
-}
-
-.card-actions :deep(.p-button-label) {
-  font-size: 0.8rem;
-}
-
-.refresh-button {
-  color: #fff;
-}
-
-.refresh-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
 .more-button {
   padding: 0.4rem !important;
-}
-
-.more-button:hover {
-  background: rgba(255, 255, 255, 0.1) !important;
-}
-
-:deep(.more-menu) {
-  background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 6px;
-  padding: 0.25rem;
-}
-
-:deep(.more-menu .p-menuitem-link) {
-  color: #fff;
-  padding: 0.5rem 0.75rem;
-  border-radius: 4px;
-}
-
-:deep(.more-menu .p-menuitem-link:hover) {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-:deep(.more-menu .p-menuitem-link .p-menuitem-icon) {
-  color: #888;
-}
-
-:deep(.more-menu .p-menuitem-link:hover .p-menuitem-icon) {
-  color: #00ffcc;
-}
-
-:deep(.more-menu .text-red-500 .p-menuitem-icon),
-:deep(.more-menu .text-red-500:hover .p-menuitem-icon) {
-  color: #ff4444;
 }
 
 .rename-form {
   padding: 1rem 0;
 }
 
-:deep(.p-dialog-content) {
-  padding-bottom: 0;
-}
-
-:deep(.p-dialog-footer) {
-  padding: 1rem 1.5rem;
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.import-button {
-  color: #fff;
-}
-
-.import-button:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.advanced-settings-container {
-  display: flex;
-  gap: 2rem;
-  height: 100%;
-}
-
-.settings-menu {
-  width: 50%;
-  max-width: 350px;
-  overflow-y: auto;
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
-  padding-right: 1rem;
-}
-
 .settings-content {
-  width: 50%;
+  flex: 1;
   padding: 1rem;
-}
-
-.setting-control {
-  margin-top: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  align-items: stretch;  /* 修改为stretch以使按钮与输入框等宽 */
-}
-
-.unit {
-  color: #888;
-  font-size: 0.9rem;
+  height: 100%;
+  overflow-y: scroll;
 }
 
 .no-setting-selected {
-  color: #888;
   text-align: center;
   margin-top: 2rem;
-}
-
-:deep(.p-panelmenu) {
-  background: transparent;
-  border: none;
-}
-
-:deep(.p-panelmenu .p-panelmenu-header-link) {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #fff;
-}
-
-:deep(.p-panelmenu .p-panelmenu-content) {
-  background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-top: none;
-}
-
-:deep(.p-panelmenu .p-menuitem-link) {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-:deep(.p-panelmenu .p-menuitem-link:hover) {
-  background: rgba(255, 255, 255, 0.1);
+  opacity: 0.6;
+  padding: 2rem;
 }
 
 .loading-container {
@@ -896,62 +746,147 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 1rem;
-  color: rgba(255, 255, 255, 0.8);
-}
-
-:deep(.p-progress-spinner) {
-  width: 50px;
-  height: 50px;
-}
-
-:deep(.p-progress-spinner-circle) {
-  stroke: #00ffcc !important;
 }
 
 .settings-header {
   padding: 0 1rem 1rem 1rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   margin-bottom: 1rem;
+  border-bottom: 1px solid var(--outline-color);
 }
 
 .settings-toggle {
   font-size: 0.9rem;
 }
 
-:deep(.settings-toggle.p-togglebutton) {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-:deep(.settings-toggle.p-togglebutton:not(.p-disabled):not(.p-highlight):hover) {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-:deep(.settings-toggle.p-togglebutton.p-highlight) {
-  background: rgba(0, 255, 204, 0.1);
-  border-color: rgba(0, 255, 204, 0.2);
-}
-
 .display-mode-select {
   width: 100%;
 }
 
-:deep(.display-mode-select .p-selectbutton) {
-  display: flex;
-}
-
-:deep(.display-mode-select .p-selectbutton .p-button) {
-  flex: 1;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-:deep(.display-mode-select .p-selectbutton .p-button.p-highlight) {
-  background: rgba(0, 255, 204, 0.1);
-  border-color: rgba(0, 255, 204, 0.2);
-}
-
 .mode-label {
   font-size: 0.9rem;
+}
+
+/* 高级设置对话框样式 */
+:deep(.p-dialog-content) {
+  background: var(--card-bg);
+  height: calc(80vh - 6rem); /* 减去对话框头部和底部的高度 */
+  padding: 0;
+  overflow: hidden; /* 防止整体滚动 */
+}
+
+.advanced-settings-container {
+  display: flex;
+  gap: 2rem;
+  background: var(--card-bg);
+  border-radius: 8px;
+  height: 100%;
+  padding-bottom: 1rem;
+}
+
+/* 左侧菜单样式 */
+.settings-menu {
+  width: 38%;
+  max-width: 340px;
+  min-width: 240px;
+  height: 100%;
+  overflow-y: scroll;
+  border-right: 1px solid var(--outline-color);
+  padding-right: 1rem;
+  padding-left: 1rem;
+  padding-top: 1rem;
+}
+
+/* 右侧内容区域样式 */
+.settings-content {
+  flex: 1;
+  padding: 1rem;
+  height: 100%;
+  overflow-y: scroll;
+}
+
+/* 设置项样式 */
+.setting-item {
+  background: var(--section-bg);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+/* 设置组标题样式 */
+.settings-group-title {
+  font-size: 0.9rem;
+  font-weight: 500;
+  margin-bottom: 0.75rem;
+  padding: 0 0.5rem;
+}
+
+/* 空状态样式 */
+.empty-plans {
+  background: var(--card-bg);
+  border: 1px solid var(--outline-color);
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  margin-top: 2rem;
+}
+
+/* 自定义滚动条样式 */
+.settings-menu::-webkit-scrollbar,
+.settings-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.settings-menu::-webkit-scrollbar-thumb,
+.settings-content::-webkit-scrollbar-thumb {
+  background: var(--outline-color);
+  border-radius: 4px;
+}
+
+/* 右侧设置内容样式 */
+.setting-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid var(--outline-color);
+}
+
+.setting-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 500;
+}
+
+.setting-control {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 1rem;
+  background: var(--section-bg);
+  border-radius: 8px;
+}
+
+.setting-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setting-field-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.setting-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--outline-color);
 }
 </style> 

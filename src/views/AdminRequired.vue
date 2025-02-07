@@ -46,25 +46,20 @@ async function requestAdmin() {
   align-items: center;
   min-height: 100vh;
   padding: 2rem;
-  background: var(--surface-ground);
 }
 
 .content {
   text-align: center;
   max-width: 600px;
   padding: 2rem;
-  background: var(--surface-card);
   border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
 }
 
 h1 {
   margin: 1rem 0;
-  color: var(--text-color);
 }
 
 p {
-  color: var(--text-color-secondary);
   line-height: 1.6;
   margin-bottom: 2rem;
 }

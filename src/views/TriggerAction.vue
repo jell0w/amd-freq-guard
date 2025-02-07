@@ -219,7 +219,7 @@ onMounted(async () => {
     <div class="global-switch">
       <div class="switch-content">
         <div class="switch-header">
-          <span class="switch-title">触发动作处理器</span>
+          <span class="switch-title">触发动作处理器 (总开关)</span>
           <ToggleSwitch v-model="triggerActionEnabled" :disabled="!(actions.length) > 0" @change="saveSettings" />
         </div>
         <p class="switch-desc">
@@ -323,14 +323,9 @@ onMounted(async () => {
   gap: 1rem;
 }
 
-.back-button {
-  color: #fff;
-}
-
 h1 {
   margin: 0;
   font-size: 1.5rem;
-  color: #fff;
 }
 
 .actions-list {
@@ -342,15 +337,24 @@ h1 {
 }
 
 .action-card {
-  background: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: var(--card-bg);
+  border: 1px solid var(--outline-color);
+  box-shadow: var(--card-shadow);
   transition: all 0.2s ease;
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+
+.action-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
 }
 
 .action-content {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  min-height: 2rem;
 }
 
 .action-info {
@@ -361,34 +365,30 @@ h1 {
   display: flex;
   align-items: center;
   gap: 1rem;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.25rem;
 }
 
 .action-header h3 {
   margin: 0;
-  color: #fff;
-  font-size: 1.1rem;
+  font-size: 1rem;
 }
 
 .action-details {
-  font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 0.8rem;
+  line-height: 1.2;
 }
 
 .plan-flow {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
-}
-
-.plan-name {
-  color: #00ffcc;
+  gap: 0.5rem;
 }
 
 .pause-time {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 0.25rem 0.5rem;
+  background: var(--section-bg);
+  padding: 0.15rem 0.35rem;
   border-radius: 4px;
+  font-size: 0.8rem;
 }
 
 .action-actions {
@@ -410,18 +410,12 @@ h1 {
 }
 
 .form-field label {
-  color: rgba(255, 255, 255, 0.7);
   font-size: 0.9rem;
 }
 
-
-:deep(.action-dialog) {
-  max-width: 500px;
-}
-
 .global-switch {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--section-bg);
+  border: 1px solid var(--outline-color);
   border-radius: 8px;
   padding: 1.5rem;
   margin-bottom: 2rem;
@@ -442,36 +436,19 @@ h1 {
 .switch-title {
   font-size: 1.1rem;
   font-weight: 500;
-  color: #fff;
 }
 
 .switch-desc {
   margin: 0;
   font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.7);
-}
-
-.action-card :deep(.p-toggleswitch.p-disabled) {
-  opacity: 0.5;
-  pointer-events: none;
-}
-
-.action-card.disabled {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-.action-header .p-toggleswitch-container {
-  opacity: v-bind(triggerActionEnabled ? 1 : 0.5);
 }
 
 .empty-actions-message {
   margin-bottom: 1rem;
-}
-
-/* 修改总开关禁用状态的样式 */
-.global-switch :deep(.p-toggleswitch.p-disabled) {
-  opacity: 0.5;
-  cursor: not-allowed;
+  background: var(--card-bg);
+  border: 1px solid var(--outline-color);
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
 }
 </style> 

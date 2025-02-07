@@ -7,12 +7,16 @@ import ToastService from 'primevue/toastservice';
 import Tooltip from 'primevue/tooltip';
 
 import 'primeicons/primeicons.css'
+import './styles/colors.css'
 
 
 const app = createApp(Layout);
 app.use(PrimeVue, {
     theme: {
-        preset: Aura
+        preset: Aura,
+        // options: {
+        //     darkModeSelector: true,
+        // }
     }
 });
 app.use(ToastService);

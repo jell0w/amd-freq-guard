@@ -592,24 +592,23 @@ async function openGithub() {
           <Button label="触发动作管理" icon="pi pi-bolt" style="width: 100%;" @click="$router.push('/trigger-action')" />
           <Button label="电源计划管理" icon="pi pi-cog" style="width: 100%;" @click="$router.push('/power-plan')" />
         </div>
-        <div class="setting-group">
-          <div class="setting-group-title">主要功能开关</div>
-          <div class="switch-list">
-            <div class="switch-item">
-              <div class="switch-header">
-                <span>频率检测</span>
-                <ToggleSwitch v-model="frequencyDetectionEnabled" @change="handleFrequencyDetectionChange" />
-              </div>
-              <p class="switch-desc">开启后将持续监控 CPU 频率变化并在超过设定的阈值时报警</p>
+        <div class="setting-section">
+          <h2>主要功能开关</h2>
+          
+          <div class="setting-subsection">
+            <div class="setting-item">
+              <span>频率检测</span>
+              <ToggleSwitch v-model="frequencyDetectionEnabled" @change="handleFrequencyDetectionChange" />
+              <p>开启后将持续监控 CPU 频率变化并在超过设定的阈值时报警</p>
             </div>
+          </div>
 
-            <div class="switch-item">
-              <div class="switch-header">
-                <span>触发动作处理器</span>
-                <ToggleSwitch v-model="triggerActionEnabled" :disabled="!triggerActions.length > 0"
-                  @change="saveSettings" />
-              </div>
-              <p class="switch-desc">当触发报警时执行已启用的触发动作</p>
+          <div class="setting-subsection">
+            <div class="setting-item">
+              <span>触发动作处理器</span>
+              <ToggleSwitch v-model="triggerActionEnabled" :disabled="!triggerActions.length > 0"
+                @change="saveSettings" />
+                <p>当触发报警时执行已启用的触发动作</p>
               <Message v-if="!triggerActions.length > 0" severity="warn" class="switch-message">
                 请先在触发动作管理中创建至少一个动作
               </Message>
@@ -617,19 +616,25 @@ async function openGithub() {
           </div>
         </div>
 
-        <div class="setting-group">
-          <div class="setting-group-title">基本设置</div>
-          <div class="setting-item">
-            <span>开机自启</span>
-            <ToggleSwitch v-model="autoStart" @change="handleAutoStartChange" />
+        <div class="setting-section">
+          <h2>基本设置</h2>
+          
+          <div class="setting-subsection">
+            <div class="setting-item">
+              <span>开机启动</span>
+              <ToggleSwitch v-model="autoStart" @change="handleAutoStartChange" />
+            </div>
           </div>
-          <div class="setting-item">
-            <span>自启时最小化</span>
-            <ToggleSwitch v-model="autoMinimize" @change="saveSettings" />
+
+          <div class="setting-subsection">
+            <div class="setting-item">
+              <span>自启时最小化</span>
+              <ToggleSwitch v-model="autoMinimize" @change="saveSettings" />
+            </div>
           </div>
         </div>
 
-        <div class="setting-group">
+        <div class="setting-section">
           <div class="setting-group-title">监控设置</div>
           <div class="setting-item">
             <span>刷新间隔
@@ -674,7 +679,7 @@ async function openGithub() {
           </div>
         </div>
 
-        <div class="setting-group">
+        <div class="setting-section">
           <div class="setting-item">
             <span>频率获取模式</span>
             <div class="mode-select-container">
@@ -692,7 +697,7 @@ async function openGithub() {
           </div>
         </div>
 
-        <div class="setting-group">
+        <div class="setting-section">
           <div class="about-links">
             <Button icon="pi pi-refresh" severity="secondary" :loading="isCheckingUpdate" @click="checkUpdate()"
               label="检查更新" />
@@ -815,11 +820,13 @@ async function openGithub() {
   </Dialog>
 </template>
 
-<style scoped>
+<style>
+
+
+
+
 .container {
   height: 100vh;
-  background: linear-gradient(135deg, #1a1a1a, #2d2d2d);
-  color: #fff;
   overflow: hidden;
 }
 
@@ -831,14 +838,16 @@ async function openGithub() {
 }
 
 .settings-panel {
+  background-color: var(--section-bg);
   padding: 1.5rem;
-  background: rgba(0, 0, 0, 0.2);
-  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  /* background: rgba(0, 0, 0, 0.2); */
+  border-right: 1px solid rgba(182, 182, 182, 0.1);
   height: 100%;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 1.5rem;
+  background: var(--panel-bg);
 }
 
 .monitoring-panel {
@@ -850,21 +859,15 @@ async function openGithub() {
 h1 {
   font-size: 1.25rem;
   margin: 0;
-  background: linear-gradient(45deg, #00ffcc, #00ccff);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
 }
 
 h2 {
   font-size: 1rem;
   margin: 0;
-  color: #fff;
 }
 
 .setting-group {
-  background: rgba(255, 255, 255, 0.03);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: var(--section-bg);
   border-radius: 8px;
   padding: 1rem;
   display: flex;
@@ -878,15 +881,8 @@ h2 {
   gap: 0.75rem;
 }
 
-.setting-item>span {
+.setting-item > span {
   font-size: 0.9rem;
-  color: #fff;
-}
-
-.setting-item:has(> .p-toggleswitch) {
-  flex-direction: row;
-  justify-content: space-between;
-  align-items: center;
 }
 
 .cpu-grid {
@@ -896,23 +892,6 @@ h2 {
   gap: 0.5rem;
   overflow-y: auto;
   padding: 0.25rem;
-}
-
-.card-normal {
-  background: rgba(255, 255, 255, 0.05) !important;
-  border: 1px solid rgba(255, 255, 255, 0.1) !important;
-  transition: all 0.2s ease;
-}
-
-.card-exceed {
-  background: rgba(255, 50, 50, 0.15) !important;
-  border: 1px solid rgba(255, 50, 50, 0.3) !important;
-  transition: all 0.2s ease;
-}
-
-.card-normal:hover,
-.card-exceed:hover {
-  transform: translateY(-2px);
 }
 
 .core-info {
@@ -928,24 +907,20 @@ h2 {
 
 .core-label {
   font-size: 0.7rem;
-  color: #00ffcc;
   text-transform: uppercase;
 }
 
 .frequency {
   font-size: 1.25rem;
   font-weight: bold;
-  color: #fff;
-  text-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
 }
 
 .unit {
   font-size: 0.65rem;
-  color: #888;
 }
 
 .interval-control {
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--section-bg);
   border-radius: 6px;
   padding: 1rem;
   display: flex;
@@ -964,25 +939,8 @@ h2 {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background-color: #00ffcc;
-  opacity: 0.2;
   transition: opacity 0.1s ease-in-out;
   z-index: 1000;
-}
-
-.refresh-indicator.refreshing {
-  opacity: 0.8;
-  box-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
-}
-
-.refresh-indicator.warning {
-  background-color: #ffaa00;
-  box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
-}
-
-.refresh-indicator.danger {
-  background-color: #ff4444;
-  box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
 }
 
 .mode-select-container {
@@ -1000,23 +958,12 @@ h2 {
   margin-left: -0.5rem;
 }
 
-.mode-help-button :deep(.p-button-icon) {
-  font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.5);
-}
-
-.frequency-mode-select :deep(.p-selectbutton .p-button:last-child) {
-  border-top-right-radius: 6px;
-  border-bottom-right-radius: 6px;
-}
-
 .mode-label {
   font-weight: 500;
 }
 
 .mode-desc {
   font-size: 0.8rem;
-  opacity: 0.7;
   margin-left: 0.25rem;
 }
 
@@ -1027,7 +974,6 @@ h2 {
   justify-content: center;
   gap: 1rem;
   height: 200px;
-  color: #00ffcc;
 }
 
 .single-cpu-container {
@@ -1036,12 +982,6 @@ h2 {
   align-items: center;
   height: 100%;
   padding: 2rem;
-}
-
-.single-cpu-container .card-normal,
-.single-cpu-container .card-exceed {
-  width: 100%;
-  max-width: 400px;
 }
 
 .main-frequency-info {
@@ -1059,15 +999,12 @@ h2 {
 
 .frequency-label {
   font-size: 1.2rem;
-  color: #00ffcc;
   text-transform: uppercase;
 }
 
 .main-frequency {
   font-size: 3rem;
   font-weight: bold;
-  color: #fff;
-  text-shadow: 0 0 20px rgba(0, 255, 204, 0.5);
 }
 
 .mode-info-container {
@@ -1077,20 +1014,17 @@ h2 {
 }
 
 .mode-info {
-  background: rgba(0, 255, 204, 0.05);
-  border: 1px solid rgba(0, 255, 204, 0.1);
+  border: 1px solid var(--outline-color);
   border-radius: 8px;
   padding: 1.5rem;
 }
 
 .mode-info h3 {
-  color: #00ffcc;
   margin: 0 0 1rem 0;
   font-size: 1.2rem;
 }
 
 .mode-description {
-  color: #fff;
   line-height: 1.6;
   margin-bottom: 1.5rem;
 }
@@ -1103,7 +1037,6 @@ h2 {
 
 .advantages h4,
 .disadvantages h4 {
-  color: #00ffcc;
   margin: 0 0 0.5rem 0;
   font-size: 1rem;
 }
@@ -1117,7 +1050,6 @@ h2 {
 
 .advantages li,
 .disadvantages li {
-  color: #fff;
   padding-left: 1.5rem;
   position: relative;
   margin-bottom: 0.5rem;
@@ -1125,32 +1057,14 @@ h2 {
 
 .advantages li::before {
   content: '✓';
-  color: #00ffcc;
   position: absolute;
   left: 0;
 }
 
 .disadvantages li::before {
   content: '!';
-  color: #ffaa00;
   position: absolute;
   left: 0;
-}
-
-:deep(.p-dialog) {
-  background: #1a1a1a;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-:deep(.p-dialog-header) {
-  background: transparent;
-  color: #00ffcc;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-:deep(.p-dialog-content) {
-  background: transparent;
-  color: #fff;
 }
 
 @media (max-width: 768px) {
@@ -1178,7 +1092,7 @@ h2 {
 }
 
 .auto-switch-section {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--section-bg);
   border-radius: 6px;
   padding: 1rem;
 }
@@ -1192,7 +1106,6 @@ h2 {
 .auto-switch-details {
   margin-top: 1rem;
   padding-top: 1rem;
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .threshold-control {
@@ -1206,17 +1119,9 @@ h2 {
   width: 4rem;
 }
 
-.threshold-input :deep(.p-inputnumber-input) {
-  height: 2rem;
-  padding: 0.25rem;
-  text-align: center;
-  font-size: 0.9rem;
-}
-
 .update-status {
   margin-top: 0.75rem;
   padding: 0.5rem;
-  background: rgba(0, 0, 0, 0.1);
   border-radius: 4px;
   font-size: 0.85rem;
   display: flex;
@@ -1226,23 +1131,12 @@ h2 {
 
 .update-status i {
   font-size: 0.9rem;
-  opacity: 0.7;
 }
 
 .setting-group-title {
   font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.7);
   margin-bottom: 0.5rem;
   font-weight: 500;
-}
-
-.interval-control {
-  background: rgba(255, 255, 255, 0.03);
-  border-radius: 6px;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
 }
 
 .action-buttons {
@@ -1258,7 +1152,6 @@ h2 {
 }
 
 .switch-item {
-  background: rgba(255, 255, 255, 0.05);
   border-radius: 6px;
   padding: 1rem;
 }
@@ -1273,7 +1166,6 @@ h2 {
 .switch-desc {
   margin: 0;
   font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.7);
 }
 
 .switch-message {
@@ -1286,7 +1178,6 @@ h2 {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: rgba(255, 255, 255, 0.5);
   gap: 1rem;
 }
 
@@ -1308,6 +1199,57 @@ h2 {
   display: flex;
   gap: 0.5rem;
   align-items: center;
+}
+
+.setting-section {
+  border: 1px solid var(--outline-color);
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.setting-subsection {
+  background: var(--section-bg);
+  border-radius: 6px;
+  padding: 1rem;
+  margin-top: 1rem;
+}
+
+/* CPU 频率卡片样式 */
+.p-card.card-normal,
+.p-card.card-exceed {
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  border: 1px solid var(--outline-color);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.p-card.card-normal:hover,
+.p-card.card-exceed:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+.p-card.card-exceed {
+  border-color: var(--red-400);
+}
+
+/* 主频卡片样式 */
+.single-cpu-container .p-card {
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  border: 1px solid var(--outline-color);
+  width: 100%;
+  max-width: 400px;
+}
+
+.main-frequency-info {
+  text-align: center;
+  padding: 2rem;
+  background: var(--card-bg);
+  border: 1px solid var(--outline-color);
+  border-radius: 8px;
+  box-shadow: var(--card-shadow);
 }
 </style>
 

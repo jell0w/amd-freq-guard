@@ -1,0 +1,32 @@
+:root {
+    --section-bg-light: rgba(0, 0, 0, 0.03);
+    --section-bg-dark: rgba(255, 255, 255, 0.03);
+    --outline-light: rgba(0, 0, 0, 0.1);
+    --outline-dark: rgba(255, 255, 255, 0.1);
+    --panel-bg-light: rgba(0, 0, 0, 0.02);
+    --panel-bg-dark: rgba(255, 255, 255, 0.02);
+    --card-bg-light: #ffffff;
+    --card-bg-dark: rgba(255, 255, 255, 0.04);
+    --card-shadow-light: 0 2px 4px rgba(0, 0, 0, 0.05);
+    --card-shadow-dark: 0 2px 4px rgba(0, 0, 0, 0.2);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --section-bg: var(--section-bg-dark);
+      --outline-color: var(--outline-dark);
+      --panel-bg: var(--panel-bg-dark);
+      --card-bg: var(--card-bg-dark);
+      --card-shadow: var(--card-shadow-dark);
+    }
+  }
+  
+  @media (prefers-color-scheme: light) {
+    :root {
+      --section-bg: var(--section-bg-light);
+      --outline-color: var(--outline-light);
+      --panel-bg: var(--panel-bg-light);
+      --card-bg: var(--card-bg-light);
+      --card-shadow: var(--card-shadow-light);
+    }
+  }
