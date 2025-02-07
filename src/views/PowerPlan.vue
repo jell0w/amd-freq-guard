@@ -609,7 +609,6 @@ onMounted(() => {
                   <Button
                     label="保存修改" 
                     icon="pi pi-save"
-                    severity="success"
                     @click="saveSettingChanges" />
                 </div>
               </div>

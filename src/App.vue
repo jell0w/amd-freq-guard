@@ -939,8 +939,25 @@ h2 {
   width: 8px;
   height: 8px;
   border-radius: 50%;
+  background-color: #00ffcc;
+  opacity: 0.2;
   transition: opacity 0.1s ease-in-out;
   z-index: 1000;
+}
+
+.refresh-indicator.refreshing {
+  opacity: 0.8;
+  box-shadow: 0 0 10px rgba(0, 255, 204, 0.5);
+}
+
+.refresh-indicator.warning {
+  background-color: #ffaa00;
+  box-shadow: 0 0 10px rgba(255, 170, 0, 0.5);
+}
+
+.refresh-indicator.danger {
+  background-color: #ff4444;
+  box-shadow: 0 0 10px rgba(255, 68, 68, 0.5);
 }
 
 .mode-select-container {
