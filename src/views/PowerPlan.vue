@@ -87,8 +87,10 @@ const selectedPlan = ref(null);
 const menu = ref();
 
 const showMenu = (event, plan) => {
+  // menu.value.hide();
   selectedPlan.value = plan;
-  menu.value.show(event);
+  // menu.value.show(event);
+  menu.value.toggle(event);
 };
 
 // 添加编辑状态的设置
@@ -504,7 +506,7 @@ onMounted(() => {
     </Dialog>
 
     <!-- 修改高级设置对话框 -->
-    <Dialog v-model:visible="advancedSettingsDialog" modal header="高级电源设置" :style="{ width: '80vw', height: '80vh' }">
+    <Dialog v-model:visible="advancedSettingsDialog" modal :header="(selectedPlan?.name||'') + ' 高级电源设置'" :style="{ width: '80vw', height: '80vh' }">
       <div class="advanced-settings-container">
         <template v-if="isLoadingSettings">
           <div class="loading-container">
@@ -611,8 +613,12 @@ onMounted(() => {
 
                 </template>
 
+                <Message v-if="hasUnsavedChanges">
+                  你的修改需要保存才会生效，离开此页面后你的更改将会丢失
+                </Message>
+
                 <!-- 添加保存按钮 -->
-                <Button v-if="hasUnsavedChanges"
+                <Button
                         label="保存修改" 
                         icon="pi pi-save"
                         severity="success"

@@ -12,6 +12,7 @@ import ToggleSwitch from 'primevue/toggleswitch';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from 'primevue/usetoast';
 import Message from 'primevue/message';
+import SelectButton from 'primevue/selectbutton';
 
 const router = useRouter();
 const actions = ref([]);
@@ -21,6 +22,14 @@ const editDialog = ref(false);
 const editingAction = ref(null);
 const triggerActionEnabled = ref(false);
 const toast = useToast();
+
+const triggerActionType = ref([
+  { label: '计划切换', value: 'simple' },
+  { label: '设置切换', value: 'setting_switch' },
+  { label: '工作流', value: 'workflow' }
+]);
+
+const currentTriggerActionType = ref('simple');
 
 // 新建/编辑动作的表单
 const actionForm = ref({
@@ -79,6 +88,8 @@ function showEditDialog(action = null) {
       enabled: false
     };
   }
+  console.log(action);
+  currentTriggerActionType.value = action?.version || 'simple';
   editDialog.value = true;
 }
 
@@ -95,7 +106,7 @@ async function saveAction() {
   }
 
   actionForm.value.id = uuidv4();
-  
+
   try {
     // 如果当前动作要被启用，先禁用其他动作
     if (actionForm.value.enabled) {
@@ -122,7 +133,7 @@ async function deleteAction(actionId) {
   try {
     await invoker('delete_trigger_action', { actionId });
     await loadActions();
-    
+
     // 如果删除后没有动作了，关闭总开关
     if (!actions.value?.length) {
       triggerActionEnabled.value = false;
@@ -196,18 +207,11 @@ onMounted(async () => {
   <div class="trigger-action-container">
     <div class="header">
       <div class="header-left">
-        <Button icon="pi pi-arrow-left"
-                text
-                rounded
-                class="back-button"
-                @click="handleBack" />
+        <Button icon="pi pi-arrow-left" text rounded class="back-button" @click="handleBack" />
         <h1>触发动作管理</h1>
       </div>
       <div class="header-actions">
-        <Button icon="pi pi-plus"
-                label="新建动作"
-                @click="showEditDialog()"
-                class="new-action-button" />
+        <Button icon="pi pi-plus" label="新建动作" @click="showEditDialog()" class="new-action-button" />
       </div>
     </div>
 
@@ -216,9 +220,7 @@ onMounted(async () => {
       <div class="switch-content">
         <div class="switch-header">
           <span class="switch-title">触发动作处理器</span>
-          <ToggleSwitch v-model="triggerActionEnabled"
-                       :disabled="!(actions.length) > 0"
-                       @change="saveSettings" />
+          <ToggleSwitch v-model="triggerActionEnabled" :disabled="!(actions.length) > 0" @change="saveSettings" />
         </div>
         <p class="switch-desc">
           启用后，当CPU频率超过阈值时将执行已启用的触发动作
@@ -227,24 +229,19 @@ onMounted(async () => {
     </div>
 
     <!-- 添加提示信息 -->
-    <Message v-if="!(actions.length) > 0" 
-             severity="warn" 
-             class="empty-actions-message">
+    <Message v-if="!(actions.length) > 0" severity="warn" class="empty-actions-message">
       请先创建至少一个触发动作，然后才能启用触发动作处理器
     </Message>
 
     <div class="actions-list">
-      <Card v-for="action in actions"
-            :key="action.id"
-            class="action-card">
+      <Card v-for="action in actions" :key="action.id" class="action-card">
         <template #content>
           <div class="action-content">
             <div class="action-info">
               <div class="action-header">
                 <h3>{{ action.name }}</h3>
-                <ToggleSwitch v-model="action.enabled"
-                             :disabled="!triggerActionEnabled"
-                             @change="toggleActionEnabled(action)" />
+                <ToggleSwitch v-model="action.enabled" :disabled="!triggerActionEnabled"
+                  @change="toggleActionEnabled(action)" />
               </div>
               <div class="action-details">
                 <div class="plan-flow">
@@ -257,64 +254,52 @@ onMounted(async () => {
               </div>
             </div>
             <div class="action-actions">
-              <Button icon="pi pi-pencil"
-                      text
-                      rounded
-                      @click="showEditDialog(action)" />
-              <Button icon="pi pi-trash"
-                      text
-                      rounded
-                      severity="danger"
-                      @click="deleteAction(action.id)" />
+              <Button icon="pi pi-pencil" text rounded @click="showEditDialog(action)" />
+              <Button icon="pi pi-trash" text rounded severity="danger" @click="deleteAction(action.id)" />
             </div>
           </div>
         </template>
       </Card>
     </div>
 
-    <Dialog v-model:visible="editDialog"
-            :header="actionForm.id ? '编辑动作' : '新建动作'"
-            modal
-            :style="{ width: '80%',
-              maxWidth: '500px'
-             }"
-            class="action-dialog">
-      <div class="action-form">
-        <Message severity="secondary" v-if="!actionForm.id">在动作被触发时，先会切换到一个临时的电源计划，再等待指定时间后切换到目标计划。这么做的目的是达到一个强制刷新的效果</Message>
+    <Dialog v-model:visible="editDialog" :header="actionForm.id ? '编辑动作' : '新建动作'" modal :style="{
+      width: '80%',
+      maxWidth: '500px'
+    }" class="action-dialog">
+      <SelectButton v-if="!actionForm.id" v-model="currentTriggerActionType" :options="triggerActionType" optionLabel="label" optionValue="value" class="w-full" />
+      <div v-if="currentTriggerActionType === 'simple'" class="action-form">
+        <Message severity="secondary" v-if="!actionForm.id">在动作被触发时，先会切换到一个临时的电源计划，再等待指定时间后切换到目标计划。这么做的目的是达到一个强制刷新的效果
+        </Message>
         <div class="form-field">
           <label>动作名称</label>
           <InputText v-model="actionForm.name" class="w-full" />
         </div>
         <div class="form-field">
           <label>临时计划</label>
-          <Dropdown v-model="actionForm.temp_plan_guid"
-                   :options="powerPlans"
-                   optionLabel="name"
-                   optionValue="guid"
-                   class="w-full" />
+          <Dropdown v-model="actionForm.temp_plan_guid" :options="powerPlans" optionLabel="name" optionValue="guid"
+            class="w-full" />
         </div>
         <div class="form-field">
           <label>停顿时间（秒）</label>
-          <InputNumber v-model="actionForm.pause_seconds"
-                      :min="1"
-                      :max="3600" />
+          <InputNumber v-model="actionForm.pause_seconds" :min="1" :max="3600" />
         </div>
         <div class="form-field">
           <label>目标计划</label>
-          <Dropdown v-model="actionForm.target_plan_guid"
-                   :options="powerPlans"
-                   optionLabel="name"
-                   optionValue="guid"
-                   class="w-full" />
+          <Dropdown v-model="actionForm.target_plan_guid" :options="powerPlans" optionLabel="name" optionValue="guid"
+            class="w-full" />
         </div>
       </div>
+      <div v-if="currentTriggerActionType === 'setting_switch'" class="action-form">
+        <Message severity="secondary" v-if="!actionForm.id">在动作被触发时，先将指定计划里面的指定设置项的值临时修改，再等待指定时间再设置成目标值</Message>
+        <Message severity="warn">这个功能还在搞搞搞，也可能咕咕咕</Message>
+      </div>
+      <div v-if="currentTriggerActionType === 'workflow'" class="action-form">
+        <Message severity="secondary" v-if="!actionForm.id">在动作被触发时，会执行一个工作流，工作流可以包含多个动作，比如条件判断、计划切换、设置切换、脚本执行、当前运行的应用读取等</Message>
+        <Message severity="warn">这个功能还在搞搞搞，但是咕咕咕的概率可能超过99%</Message>
+      </div>
       <template #footer>
-        <Button label="取消"
-                text
-                @click="editDialog = false" />
-        <Button label="保存"
-                @click="saveAction"
-                severity="primary" />
+        <Button label="取消" text @click="editDialog = false" />
+        <Button label="保存" @click="saveAction" severity="primary" />
       </template>
     </Dialog>
   </div>

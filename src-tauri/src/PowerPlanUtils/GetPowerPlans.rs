@@ -1,7 +1,7 @@
 use windows::{
     core::{Error, GUID},
     Win32::{
-        Foundation::WIN32_ERROR,
+        Foundation::{WIN32_ERROR, LocalFree, HLOCAL},
         System::{
             Power::{
                 PowerEnumerate, PowerGetActiveScheme, PowerReadACValue, PowerReadDCValue,
@@ -20,7 +20,7 @@ use windows::{
 use serde::Serialize;
 use serde_json;
 
-use log::info;
+use log::{info, error};
 
 /// 对外公开的电源计划结构体，包含 UUID 和友好名称
 #[derive(Debug, Serialize)]
@@ -571,7 +571,19 @@ fn get_active_power_scheme() -> Result<GUID, String> {
         ));
     }
 
-    Ok(unsafe { p_active_guid.read() })
+    let guid = unsafe { p_active_guid.read() };
+
+    // 释放内存
+    let free_result = unsafe { LocalFree(Some(HLOCAL(p_active_guid as *mut _))) };
+    if !free_result.is_invalid() {
+        // println!("内存释放失败");
+        error!("内存释放失败");
+    }else {
+        // println!("内存释放成功");
+    }
+
+
+    Ok(guid)
 }
 
 fn activate_power_scheme(guid: GUID) -> Result<(), String> {
