@@ -5,10 +5,8 @@ import ToggleSwitch from 'primevue/toggleswitch';
 import InputNumber from 'primevue/inputnumber';
 import Slider from 'primevue/slider';
 import Card from 'primevue/card';
-import Divider from 'primevue/divider';
 import { showNotification } from './utils/native-notification';
 import Button from 'primevue/button';
-import Dropdown from 'primevue/dropdown';
 import SelectButton from 'primevue/selectbutton';
 import Dialog from 'primevue/dialog';
 import Message from 'primevue/message';
@@ -17,20 +15,29 @@ import { listen } from '@tauri-apps/api/event';
 import Skeleton from 'primevue/skeleton';
 import { getVersion } from '@tauri-apps/api/app';
 import { getGithubRepoURL } from './utils/Constants';
-//引入lodash做防抖
-import { debounce } from 'lodash';
-
+import { useSettingsStore } from './stores/settings';
+import { storeToRefs } from 'pinia';
 
 const toast = useToast();
 
+const settingsStore = useSettingsStore();
+const { trigger_action_enabled: triggerActionEnabled,
+  frequency_threshold:frequencyThreshold,
+  auto_switch_enabled:autoSwitchEnabled,
+  auto_switch_threshold:autoSwitchThreshold,
+  frequency_mode:frequencyMode,
+  refresh_interval:refreshInterval,
+  frequency_detection_enabled:frequencyDetectionEnabled,
+  alert_debounce_seconds:alertDebounceSeconds,
+  auto_start:autoStart,
+  auto_minimize:autoMinimize,
+  
+ } = storeToRefs(settingsStore);
+
 const cpuFrequencies = ref([]);
-const autoStart = ref(false);
-const autoMinimize = ref(false);
-const refreshInterval = ref(1000);
-const frequencyThreshold = ref(3.5);
+
 const isRefreshing = ref(false);
 const indicatorStatus = ref('normal');
-const frequencyMode = ref(1);
 const isLoading = ref(false);
 const modeDialogVisible = ref(false);
 const hasNewVersion = ref(null);
@@ -60,102 +67,21 @@ const modeDescriptions = {
     ]
   }
 };
-const autoSwitchEnabled = ref(false);
-const autoSwitchThreshold = ref(25);
 const unchangedCount = ref(0);
 const lastFrequencies = ref([]);
 const lastUpdateCount = ref(0);
-const triggerActionEnabled = ref(false);
-const frequencyDetectionEnabled = ref(true);
-const defaultSettings = {
-  auto_start: false,
-  auto_minimize: false,
-  refresh_interval: 1000,
-  frequency_threshold: 3.5,
-  frequency_mode: "1",
-  auto_switch_enabled: false,
-  auto_switch_threshold: 25,
-  trigger_action_enabled: false,
-  frequency_detection_enabled: true,
-  alert_debounce_seconds: 15
-};
 const triggerActions = ref([]);
 const frequencyModes = [
-  { label: 'SysInfo', value: 1, icon: 'pi pi-th-large', desc: '多核心检测' },
-  { label: 'CalcMhz', value: 2, icon: 'pi pi-stop', desc: '主频检测' }
+  { label: 'SysInfo', value: "1", icon: 'pi pi-th-large', desc: '多核心检测' },
+  { label: 'CalcMhz', value: "2", icon: 'pi pi-stop', desc: '主频检测' }
 ];
 
 // 移除不必要的 ref
 const checkTimer = ref(null);
 const eventListeners = ref([]);
 
-const alertDebounceSeconds = ref(15);
-
 const isCheckingUpdate = ref(false);
 
-async function loadSettings() {
-  try {
-    const settings = await invoker('load_settings');
-    console.log('加载的设置:', settings);
-
-    // 先设置模式，这样可以确保界面正确显示
-    frequencyMode.value = parseInt(settings.frequency_mode ?? defaultSettings.frequency_mode);
-
-    // 然后设置其他值
-    autoStart.value = settings.auto_start ?? defaultSettings.auto_start;
-    autoMinimize.value = settings.auto_minimize ?? defaultSettings.auto_minimize;
-    refreshInterval.value = settings.refresh_interval ?? defaultSettings.refresh_interval;
-    frequencyThreshold.value = settings.frequency_threshold ?? defaultSettings.frequency_threshold;
-    autoSwitchEnabled.value = settings.auto_switch_enabled ?? defaultSettings.auto_switch_enabled;
-    autoSwitchThreshold.value = settings.auto_switch_threshold ?? defaultSettings.auto_switch_threshold;
-    triggerActionEnabled.value = settings.trigger_action_enabled ?? defaultSettings.trigger_action_enabled;
-    frequencyDetectionEnabled.value = settings.frequency_detection_enabled ?? defaultSettings.frequency_detection_enabled;
-    alertDebounceSeconds.value = settings.alert_debounce_seconds ?? defaultSettings.alert_debounce_seconds;
-
-    // 确保后端也使用正确的设置
-    await invoker('update_monitor_settings', { settings });
-  } catch (e) {
-    console.error('加载设置失败:', e);
-    // 使用默认值
-    frequencyMode.value = parseInt(defaultSettings.frequency_mode);
-    autoStart.value = defaultSettings.auto_start;
-    autoMinimize.value = defaultSettings.auto_minimize;
-    refreshInterval.value = defaultSettings.refresh_interval;
-    frequencyThreshold.value = defaultSettings.frequency_threshold;
-    autoSwitchEnabled.value = defaultSettings.auto_switch_enabled;
-    autoSwitchThreshold.value = defaultSettings.auto_switch_threshold;
-    triggerActionEnabled.value = defaultSettings.trigger_action_enabled;
-    frequencyDetectionEnabled.value = defaultSettings.frequency_detection_enabled;
-    alertDebounceSeconds.value = defaultSettings.alert_debounce_seconds;
-
-    // 即使加载失败也要确保后端使用默认设置
-    await invoker('update_monitor_settings', { settings: defaultSettings }).catch(err => {
-      console.error('更新后端设置失败:', err);
-    });
-  }
-}
-
-async function saveSettings() {
-  // console.log('保存设置');
-  try {
-    const settings = {
-      auto_start: autoStart.value,
-      auto_minimize: autoMinimize.value,
-      refresh_interval: refreshInterval.value,
-      frequency_threshold: frequencyThreshold.value,
-      frequency_mode: String(frequencyMode.value),
-      auto_switch_enabled: autoSwitchEnabled.value,
-      auto_switch_threshold: autoSwitchThreshold.value,
-      trigger_action_enabled: triggerActionEnabled.value,
-      frequency_detection_enabled: frequencyDetectionEnabled.value,
-      alert_debounce_seconds: alertDebounceSeconds.value,
-    };
-    await invoker('update_monitor_settings', { settings });
-    await invoker('save_settings', { settings });
-  } catch (e) {
-    console.error('保存设置失败:', e);
-  }
-}
 
 // 修改事件监听器设置函数
 async function setupEventListeners() {
@@ -193,7 +119,7 @@ async function setupEventListeners() {
   // 监听模式切换
   const modeListener = await listen('mode-switched', (event) => {
     const { mode, auto_switch_disabled, unchanged_count } = event.payload;
-    frequencyMode.value = parseInt(mode);
+    frequencyMode.value = mode;
     lastUpdateCount.value = unchanged_count || 0;  // 更新计数
 
     if (auto_switch_disabled) {
@@ -259,6 +185,18 @@ async function setupEventListeners() {
     });
   });
   eventListeners.value.push(thresholdListener);
+
+  // 监听触发动作禁用事件
+  const triggerActionDisabledListener = await listen('trigger-actions-disabled', (event) => {
+    toast.add({
+      severity: 'warn',
+      summary: '触发动作已禁用',
+      detail: event.payload,
+      closable: true,
+      sticky: true
+    });
+  });
+  eventListeners.value.push(triggerActionDisabledListener);
 }
 
 async function loadTriggerActions() {
@@ -273,8 +211,9 @@ async function loadTriggerActions() {
 }
 
 onMounted(async () => {
+  console.log("data in pinia:", settingsStore.$state);
   checkUpdate(true, true, true);
-  await loadSettings();
+  // await loadSettings();
   await loadTriggerActions();
   await setupEventListeners();
 
@@ -296,164 +235,6 @@ onUnmounted(() => {
   eventListeners.value = [];
 });
 
-const handleIntervalChange = debounce(handleIntervalChangeReal, 200);
-
-
-// 修改刷新间隔处理函数
-async function handleIntervalChangeReal() {
-  try {
-    // 先保存设置到文件
-    await saveSettings();
-
-    // 再通知后端更新
-    await invoker('update_monitor_settings', {
-      settings: {
-        auto_start: autoStart.value,
-        auto_minimize: autoMinimize.value,
-        refresh_interval: refreshInterval.value,
-        frequency_threshold: frequencyThreshold.value,
-        frequency_mode: String(frequencyMode.value),
-        auto_switch_enabled: autoSwitchEnabled.value,
-        auto_switch_threshold: autoSwitchThreshold.value,
-        trigger_action_enabled: triggerActionEnabled.value,
-        frequency_detection_enabled: frequencyDetectionEnabled.value,
-        alert_debounce_seconds: alertDebounceSeconds.value,
-      }
-    });
-
-    toast.add({
-      severity: 'success',
-      summary: '设置已更新',
-      detail: `刷新间隔已更新为 ${refreshInterval.value} ms`,
-      life: 2000
-    });
-  } catch (error) {
-    console.error('更新刷新间隔失败:', error);
-    toast.add({
-      severity: 'error',
-      summary: '更新失败',
-      detail: '更新刷新间隔时发生错误',
-      life: 3000
-    });
-  }
-}
-
-const handleThresholdChange = debounce(handleThresholdChangeReal, 200);
-
-// 修改频率阈值处理函数
-async function handleThresholdChangeReal() {
-  try {
-    await saveSettings();
-    toast.add({
-      severity: 'success',
-      summary: '设置已更新',
-      detail: `频率阈值已更新为 ${frequencyThreshold.value} GHz`,
-      life: 2000
-    });
-  } catch (error) {
-    console.error('更新频率阈值失败:', error);
-    toast.add({
-      severity: 'error',
-      summary: '更新失败',
-      detail: '更新频率阈值时发生错误',
-      life: 3000
-    });
-  }
-}
-
-// 修改模式切换处理函数
-async function handleModeChange() {
-  try {
-    // 先清空频率列表
-    cpuFrequencies.value = [];
-
-    // 通知后端切换模式
-    await invoker('update_frequency_mode', { mode: String(frequencyMode.value) });
-
-    // 立即执行一次频率获取
-    await invoker('refresh_frequencies');
-
-    await saveSettings();
-  } catch (error) {
-    console.error('切换模式失败:', error);
-    toast.add({
-      severity: 'error',
-      summary: '切换失败',
-      detail: '切换频率获取模式时发生错误',
-      life: 3000
-    });
-  }
-}
-
-// 处理自动切换开关变化
-async function handleAutoSwitchChange() {
-  try {
-    if (!autoSwitchEnabled.value) {
-      autoSwitchThreshold.value = 0;
-    } else {
-      if (frequencyMode.value !== 1) {
-        frequencyMode.value = 1;
-        toast.add({
-          severity: 'info',
-          summary: '模式已切换',
-          detail: '已自动切换到 SysInfo 模式以启用自动切换功能',
-          life: 3000
-        });
-      }
-      autoSwitchThreshold.value = 25;
-    }
-
-    await saveSettings();
-
-    await invoker('update_auto_switch', {
-      enabled: autoSwitchEnabled.value,
-      threshold: autoSwitchThreshold.value
-    });
-
-    toast.add({
-      severity: 'success',
-      summary: '设置已更新',
-      detail: autoSwitchEnabled.value ? '已开启自动切换' : '已关闭自动切换',
-      life: 3000
-    });
-  } catch (error) {
-    console.error('更新自动切换设置失败:', error);
-    toast.add({
-      severity: 'error',
-      summary: '设置失败',
-      detail: '更新自动切换设置时发生错误',
-      life: 3000
-    });
-  }
-}
-
-// 修改频率检测开关处理函数
-async function handleFrequencyDetectionChange() {
-  try {
-    await saveSettings();
-  } catch (error) {
-    console.error('更新频率检测设置失败:', error);
-  }
-}
-
-async function checkTriggerActionStatus() {
-  try {
-    const hasActive = await invoker('check_active_trigger_action');
-    if (!hasActive && triggerActionEnabled.value) {
-      triggerActionEnabled.value = false;
-      toast.add({
-        severity: 'warn',
-        summary: '触发动作已禁用',
-        detail: '没有找到已启用的触发动作',
-        life: 3000
-      });
-      await saveSettings();
-    }
-  } catch (error) {
-    console.error('检查触发动作状态失败:', error);
-  }
-}
-
 async function openExternalLink(url) {
   try {
     await invoker('open_external_link', { url });
@@ -471,7 +252,6 @@ async function openExternalLink(url) {
 async function handleAutoStartChange() {
   try {
     await invoker('toggle_autostart', { enabled: autoStart.value });
-    await saveSettings();
 
     toast.add({
       severity: 'success',
@@ -486,22 +266,7 @@ async function handleAutoStartChange() {
       detail: '更新自启动设置时发生错误，目前仅关闭开关',
       life: 5000
     });
-    try {
-      await saveSettings();
-    } catch (errorOnSave) {
-      // 恢复开关状态
-      autoStart.value = !autoStart.value;
-      toast.add({
-        severity: 'error',
-        summary: '设置失败',
-        detail: error.toString() + ";" + errorOnSave.toString(),
-        life: 5000
-      });
-    }
-
-
-
-
+    autoStart.value = !autoStart.value;
   }
 }
 
@@ -571,6 +336,12 @@ async function openGithub() {
   console.log({ url })
   await openExternalLink(url);
 }
+
+async function handleFrequencyModeChange(value) {
+  //清除频率列表
+  cpuFrequencies.value = [];
+}
+
 </script>
 
 <template>
@@ -598,7 +369,7 @@ async function openGithub() {
           <div class="setting-subsection">
             <div class="setting-item">
               <span>频率检测</span>
-              <ToggleSwitch v-model="frequencyDetectionEnabled" @change="handleFrequencyDetectionChange" />
+              <ToggleSwitch v-model="frequencyDetectionEnabled"/>
               <p>开启后将持续监控 CPU 频率变化并在超过设定的阈值时报警</p>
             </div>
           </div>
@@ -606,8 +377,7 @@ async function openGithub() {
           <div class="setting-subsection">
             <div class="setting-item">
               <span>触发动作处理器</span>
-              <ToggleSwitch v-model="triggerActionEnabled" :disabled="!triggerActions.length > 0"
-                @change="saveSettings" />
+              <ToggleSwitch v-model="triggerActionEnabled" :disabled="!triggerActions.length > 0"/>
                 <p>当触发报警时执行已启用的触发动作</p>
               <Message v-if="!triggerActions.length > 0" severity="warn" class="switch-message">
                 请先在触发动作管理中创建至少一个动作
@@ -629,14 +399,14 @@ async function openGithub() {
           <div class="setting-subsection">
             <div class="setting-item">
               <span>自启时最小化</span>
-              <ToggleSwitch v-model="autoMinimize" @change="saveSettings" />
+              <ToggleSwitch v-model="autoMinimize" />
             </div>
           </div>
         </div>
 
         <div class="setting-section">
           <div class="setting-group-title">监控设置</div>
-          <div class="setting-item">
+          <div class="setting-item" style="margin-top: 1rem;">
             <span>刷新间隔
               <i class="pi pi-question-circle" v-tooltip.top="'每隔多少毫秒刷新一次CPU频率'"
                 style="cursor: help;margin: auto 0;opacity: 0.5;">
@@ -644,14 +414,14 @@ async function openGithub() {
             </span>
             <div class="interval-control">
               <Slider v-model="refreshInterval" :min="320" :max="5000" :step="10" class="custom-slider"
-                @change="handleIntervalChange" />
-              <InputNumber v-model="refreshInterval" :min="320" suffix=" 毫秒" @change="handleIntervalChange" />
-              <Message v-if="(refreshInterval < 2000) && frequencyMode === 2" severity="warn" variant="outlined"
+                 />
+              <InputNumber v-model="refreshInterval" :min="320" suffix=" 毫秒" />
+              <Message v-if="(refreshInterval < 2000) && frequencyMode === '2'" severity="warn" variant="outlined"
                 size="small">过快的刷新频率可能增加CPU占用率</Message>
             </div>
           </div>
 
-          <div class="setting-item">
+          <div class="setting-item" style="margin-top: 1rem;">
             <span>频率阈值
               <i class="pi pi-question-circle" v-tooltip.top="'如果CPU频率超过此阈值，将触发报警'"
                 style="cursor: help;margin: auto 0;opacity: 0.5;">
@@ -659,20 +429,20 @@ async function openGithub() {
             </span>
             <div class="interval-control">
               <Slider v-model="frequencyThreshold" :min="1.0" :max="5.0" :step="0.1" class="custom-slider"
-                @change="handleThresholdChange" />
+                />
               <InputNumber v-model="frequencyThreshold" :maxFractionDigits="3" suffix=" GHz"
-                @input="handleThresholdChange" />
+                />
             </div>
           </div>
 
-          <div class="setting-item">
+          <div class="setting-item" style="margin-top: 1rem;">
             <span>报警防抖时间
               <i class="pi pi-question-circle" v-tooltip.top="'如果多个报警同时触发，在防抖时间内，重复的报警行为将不起作用'"
                 style="cursor: help;margin: auto 0;opacity: 0.5;">
               </i>
             </span>
             <div class="interval-control">
-              <InputNumber v-model="alertDebounceSeconds" :min="5" :max="300" @change="saveSettings" suffix=" 秒"
+              <InputNumber v-model="alertDebounceSeconds" :min="5" :max="300" suffix=" 秒"
                 class="w-16" />
             </div>
 
@@ -683,8 +453,8 @@ async function openGithub() {
           <div class="setting-item">
             <span>频率获取模式</span>
             <div class="mode-select-container">
-              <SelectButton :allowEmpty="false" v-model="frequencyMode" :options="frequencyModes" optionLabel="label"
-                optionValue="value" class="frequency-mode-select" @change="handleModeChange">
+              <SelectButton :allowEmpty="false" v-model="frequencyMode" :options="frequencyModes" @update:modelValue="handleFrequencyModeChange" optionLabel="label"
+                optionValue="value" class="frequency-mode-select">
                 <template #option="slotProps">
                   <span v-tooltip.bottom="slotProps.option.desc" class="mode-label">
                     {{ slotProps.option.label }}
@@ -729,7 +499,7 @@ async function openGithub() {
         </div>
 
         <template v-if="frequencyDetectionEnabled">
-          <div v-if="frequencyMode === 1">
+          <div v-if="frequencyMode === '1'">
             <div class="cpu-grid">
               <Card v-for="(freq, index) in cpuFrequencies" :key="index" :pt="{
                 root: { class: freq / 1000 > frequencyThreshold ? 'card-exceed' : 'card-normal' }
@@ -745,21 +515,21 @@ async function openGithub() {
                 </template>
               </Card>
             </div>
-            <Message v-if="frequencyMode === 1" severity="warn" class="mode-warning">
+            <Message v-if="frequencyMode === '1'" severity="warn" class="mode-warning">
               <div class="warning-content">
                 <div class="warning-text">
                   注意，在此模式下，可能在某些机型、某些条件(如此前进入了睡眠状态)下，频率会不更新，这样子的话你需要切换到CalcMhz模式。
                 </div>
                 <div class="auto-switch-section">
                   <div class="auto-switch-header">
-                    <ToggleSwitch v-model="autoSwitchEnabled" @change="handleAutoSwitchChange" />
+                    <ToggleSwitch v-model="autoSwitchEnabled" />
                     <span>自动切换到 CalcMhz 模式</span>
                   </div>
                   <div v-if="autoSwitchEnabled" class="auto-switch-details">
                     <div class="threshold-control">
                       <span>在连续</span>
-                      <InputNumber v-model="autoSwitchThreshold" :min="20" :max="1000"
-                        @update:modelValue="saveSettings" />
+                      <InputNumber v-model="autoSwitchThreshold" :min="5" :max="1000"
+                         />
                       <span>次未更新后切换</span>
                     </div>
                     <div v-if="lastUpdateCount > 0" class="update-status">
@@ -879,6 +649,7 @@ h2 {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
+  /* margin-top: 1rem; */
 }
 
 .setting-item > span {
@@ -1224,6 +995,7 @@ h2 {
   padding: 1rem;
   margin-bottom: 1rem;
 }
+
 
 .setting-subsection {
   background: var(--section-bg);

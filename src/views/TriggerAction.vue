@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { invoker } from '../utils/invoker';
 import { useRouter } from 'vue-router';
 import Card from 'primevue/card';
@@ -13,6 +13,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { useToast } from 'primevue/usetoast';
 import Message from 'primevue/message';
 import SelectButton from 'primevue/selectbutton';
+import { useSettingsStore } from '../stores/settings';
+import { storeToRefs } from 'pinia';
 
 const router = useRouter();
 const actions = ref([]);
@@ -20,8 +22,11 @@ const powerPlans = ref([]);
 const isLoading = ref(false);
 const editDialog = ref(false);
 const editingAction = ref(null);
-const triggerActionEnabled = ref(false);
+// const triggerActionMasterSwitch = ref(false);
 const toast = useToast();
+
+const settingsStore = useSettingsStore();
+const { trigger_action_enabled:triggerActionMasterSwitch, pending, error } = storeToRefs(settingsStore);
 
 const triggerActionType = ref([
   { label: '计划切换', value: 'simple' },
@@ -69,7 +74,7 @@ async function loadPowerPlans() {
 async function loadSettings() {
   try {
     const settings = await invoker('load_settings');
-    triggerActionEnabled.value = settings.trigger_action_enabled;
+    triggerActionMasterSwitch.value = settings.trigger_action_enabled;
   } catch (error) {
     console.error('加载设置失败:', error);
   }
@@ -85,11 +90,12 @@ function showEditDialog(action = null) {
       temp_plan_guid: '',
       target_plan_guid: '',
       pause_seconds: 1,
-      enabled: false
+      enabled: false,
+      version: 'simple'
     };
   }
   console.log(action);
-  currentTriggerActionType.value = action?.version || 'simple';
+  currentTriggerActionType.value = actionForm.value.version;
   editDialog.value = true;
 }
 
@@ -136,8 +142,8 @@ async function deleteAction(actionId) {
 
     // 如果删除后没有动作了，关闭总开关
     if (!actions.value?.length) {
-      triggerActionEnabled.value = false;
-      await saveSettings();
+      triggerActionMasterSwitch.value = false;
+      await saveMasterSwitch();
       toast.add({
         severity: 'info',
         summary: '触发动作处理器已关闭',
@@ -156,11 +162,11 @@ function handleBack() {
 }
 
 // 修改保存设置函数，添加检查
-async function saveSettings() {
+async function saveMasterSwitch() {
   try {
     // 如果要开启总开关，先检查是否有动作
-    if (triggerActionEnabled.value && (!actions.value || actions.value.length === 0)) {
-      triggerActionEnabled.value = false;  // 重置开关状态
+    if (triggerActionMasterSwitch.value && (!actions.value || actions.value.length === 0)) {
+      triggerActionMasterSwitch.value = false;  // 重置开关状态
       toast.add({
         severity: 'warn',
         summary: '无法启用',
@@ -170,34 +176,50 @@ async function saveSettings() {
       return;
     }
 
-    const settings = await invoker('load_settings');
-    await invoker('save_settings', {
-      settings: {
-        ...settings,
-        trigger_action_enabled: triggerActionEnabled.value
-      }
-    });
+    await settingsStore.updateSetting('trigger_action_enabled', triggerActionMasterSwitch.value);
   } catch (error) {
     console.error('保存设置失败:', error);
   }
 }
 
 // 修改切换动作启用状态的函数
-async function toggleActionEnabled(action) {
-  if (action.enabled) {
-    // 如果要启用当前动作，先禁用其他所有动作
-    for (const otherAction of actions.value) {
-      if (otherAction.id !== action.id && otherAction.enabled) {
-        otherAction.enabled = false;
-        await invoker('save_trigger_action', { action: otherAction });
-      }
-    }
+async function handleActionToggle(action) {
+  try {
+    await invoker('toggle_trigger_action', {
+      actionId: action.id,
+      enabled: action.enabled
+    },true);
+  } catch (error) {
+    // 如果失败，恢复开关状态
+    action.enabled = !action.enabled;
+    
+    // 显示错误消息
+    toast.add({
+      severity: 'error',
+      summary: '操作失败',
+      detail: error,
+      life: 5000
+    });
   }
-  await invoker('save_trigger_action', { action });
+}
+
+// 直接修改值即可，watch 会自动处理保存
+function toggleMasterSwitch() {
+  if (!actions.value?.length && !triggerActionMasterSwitch.value) {
+    toast.add({
+      severity: 'warn',
+      summary: '无法启用',
+      detail: '请先创建至少一个触发动作',
+      life: 3000
+    });
+    return;
+  }
+  
+  triggerActionMasterSwitch.value = !triggerActionMasterSwitch.value;
 }
 
 onMounted(async () => {
-  await loadSettings();
+  await settingsStore.loadSettings();
   await loadActions();
   await loadPowerPlans();
 });
@@ -220,7 +242,7 @@ onMounted(async () => {
       <div class="switch-content">
         <div class="switch-header">
           <span class="switch-title">触发动作处理器 (总开关)</span>
-          <ToggleSwitch v-model="triggerActionEnabled" :disabled="!(actions.length) > 0" @change="saveSettings" />
+          <ToggleSwitch v-model="triggerActionMasterSwitch" :disabled="pending" />
         </div>
         <p class="switch-desc">
           启用后，当CPU频率超过阈值时将执行已启用的触发动作
@@ -240,8 +262,8 @@ onMounted(async () => {
             <div class="action-info">
               <div class="action-header">
                 <h3>{{ action.name }}</h3>
-                <ToggleSwitch v-model="action.enabled" :disabled="!triggerActionEnabled"
-                  @change="toggleActionEnabled(action)" />
+                <ToggleSwitch v-model="action.enabled" :disabled="!triggerActionMasterSwitch"
+                  @change="handleActionToggle(action)" />
               </div>
               <div class="action-details">
                 <div class="plan-flow">
@@ -451,4 +473,4 @@ h1 {
   padding: 2rem;
   text-align: center;
 }
-</style> 
+</style>

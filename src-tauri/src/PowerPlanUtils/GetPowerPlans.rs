@@ -916,7 +916,33 @@ pub fn write_setting_attributes(
     Ok(())
 }
 
+pub fn transfer_guidstr_to_guid(guid_str: &str) -> Result<GUID, String> {
+    let guid_str = guid_str.replace("-", "");
+
+    let guid_u128 = u128::from_str_radix(&guid_str, 16)
+        .map_err(|e| format!("无效的 GUID 字符串: {}", e))?;
+    let guid = GUID::from_u128(guid_u128);
+    Ok(guid)
+}
+
+pub fn check_if_scheme_is_valid(guid_str: &str) -> bool {
+    let plans = match get_power_plans() {
+        Ok(plans) => plans,
+        Err(_) => return false,
+    };
+
+    let guid_upper = guid_str.to_uppercase();
+    plans.into_iter().any(|p| {
+        format!("{:?}", p.uuid)
+            .to_uppercase()
+            .contains(&guid_upper)
+    })
+}
+
+
+
 #[derive(Debug, Serialize)]
+
 pub struct UnifiedPowerSetting {
     pub setting: PowerSetting,
     pub current_value: PowerSettingValue,
@@ -1057,7 +1083,7 @@ mod tests {
         println!("result_possible_settings: {:?}", result_possible_settings);
     }
 
-    #[test]
+    // #[test]
     fn test_set_power_setting_ac_value() {
         let test_guid_str = "eeb9e234-a391-4fdd-aa49-50f262128015";
         let test_subgroup_guid_str = "0012ee47-9041-4b5d-9b77-535fba8b1442";
@@ -1074,5 +1100,34 @@ mod tests {
             test_dc_value,
         );
         println!("result_write_value_set: {:?}", result_write_value_set);
+    }
+
+    #[test]
+    fn test_get_power_scheme_friendly_name() {
+        let test_guid_str = "eeb9e234-a391-4fdd-aa49-50f262128019";
+
+        let result_friendly_name = get_friendly_name(
+            Some(&transfer_guidstr_to_guid(test_guid_str).unwrap()),
+            None,
+            None,
+        );
+
+        println!("result_friendly_name: {:?}", result_friendly_name);
+
+    }
+
+    // #[test]
+    // fn test_get_power_scheme_subgroups() {
+    //     let test_guid_str = "eeb9e234-a391-4fdd-aa49-50f262128019";
+
+    //     let result_subgroups = enumerate_power_scheme_subgroups(test_guid_str);
+    //     println!("result_subgroups: {:?}", result_subgroups);
+    // }
+
+    #[test]
+    fn test_check_if_scheme_is_valid() {
+        let test_guid_str = "eeb9e234-a391-4fdd-aa49-50f262128019";
+        let result_is_valid = check_if_scheme_is_valid(test_guid_str);
+        println!("result_is_valid: {:?}", result_is_valid);
     }
 }

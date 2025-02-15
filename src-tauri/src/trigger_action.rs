@@ -87,3 +87,23 @@ fn save_trigger_actions(app: &AppHandle, actions: &[TriggerAction]) -> Result<()
 
     fs::write(actions_path, json).map_err(|e| format!("保存触发动作失败: {}", e))
 }
+
+// 添加新函数
+pub async fn set_trigger_action_enabled(app: &tauri::AppHandle, action_id: &str, enabled: bool) -> Result<(), String> {
+    let mut actions = load_trigger_actions(app.clone()).await?;
+    
+    // 查找并更新指定动作的启用状态
+    if let Some(action) = actions.iter_mut().find(|a| a.id == action_id) {
+        action.enabled = enabled;
+        // 保存更新后的动作列表
+        save_trigger_actions(app, &actions)?;
+    }
+    
+    Ok(())
+}
+
+// 添加新函数用于获取动作详情
+pub async fn get_trigger_action_by_id(app: &tauri::AppHandle, action_id: &str) -> Result<Option<TriggerAction>, String> {
+    let actions = load_trigger_actions(app.clone()).await?;
+    Ok(actions.into_iter().find(|a| a.id == action_id))
+}

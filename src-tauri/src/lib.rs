@@ -8,7 +8,12 @@ use std::fmt;
 use std::os::windows::ffi::OsStrExt;
 use std::thread;
 use std::time::Duration;
-use std::{fs, path::{PathBuf, Path}, process::Command, sync::Mutex};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+    sync::Mutex,
+};
 use sysinfo::{CpuRefreshKind, System};
 // use tauri::api::shell;
 use tauri::async_runtime;
@@ -16,33 +21,45 @@ use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, State, WebviewWindow,
+    Emitter
 };
 use tauri_plugin_shell::ShellExt;
 use windows_sys::Win32::UI::Shell::IsUserAnAdmin;
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, ShowWindow, SetForegroundWindow, PostMessageW,
-    SW_SHOW, IsWindow, WM_CLOSE
+    FindWindowW, IsWindow, PostMessageW, SetForegroundWindow, ShowWindow, SW_SHOW, WM_CLOSE,
 };
 
 // 在文件顶部添加模块声明
 mod power_plan;
-use power_plan::{get_power_plans, set_active_plan, PowerPlan,get_power_plans_json_by_scheme_guid};
+use power_plan::{
+    check_if_scheme_is_valid, get_power_plans, get_power_plans_json_by_scheme_guid,
+    set_active_plan, PowerPlan,
+};
 
 mod trigger_action;
-pub use trigger_action::{delete_trigger_action, load_trigger_actions, save_trigger_action};
+pub use trigger_action::{delete_trigger_action, load_trigger_actions, save_trigger_action, set_trigger_action_enabled, get_trigger_action_by_id};
 
 mod monitor;
 pub use monitor::MONITOR;
 
 mod settings;
+mod settings_store;
 pub use settings::Settings;
+use settings_store::{
+    get_settings, 
+    update_settings, 
+    init_settings_store, 
+    set_trigger_action_master_switch,
+    update_setting,
+    get_setting,
+};
 
 mod notification;
-use notification::send_notification;
+use notification::{init_notification_manager, send_notification};
 
 mod autostart;
-use autostart::{setup_autostart, enable_autostart, disable_autostart};
+use autostart::{disable_autostart, enable_autostart, setup_autostart};
 
 mod updater;
 use updater::check_update;
@@ -55,7 +72,7 @@ use PowerPlanUtils::GetPowerPlans::write_value_set;
 
 // 添加新模块
 mod power_settings_preferences_store;
-use power_settings_preferences_store::{toggle_power_setting_liked, get_liked_power_settings};
+use power_settings_preferences_store::{get_liked_power_settings, toggle_power_setting_liked};
 
 // 创建一个全局状态来存储System实例
 struct SystemState(Mutex<System>);
@@ -104,98 +121,13 @@ fn get_settings_path(app: &tauri::AppHandle) -> PathBuf {
 // }
 
 #[tauri::command]
-async fn save_settings(app: tauri::AppHandle, mut settings: Settings) -> Result<(), String> {
-    // 如果是自动切换导致的保存，保持原有的频率检测模式
-    if MONITOR.is_mode_auto_switched().await {
-        // 读取文件中的旧设置
-        if let Ok(content) = fs::read_to_string(get_settings_path(&app)) {
-            if let Ok(old_settings) = serde_json::from_str::<Settings>(&content) {
-                settings.frequency_mode = old_settings.frequency_mode;
-            }
-        }
-    }
-
-    let settings_path = get_settings_path(&app);
-    
-    // 确保目录存在
-    if let Some(parent) = settings_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
-    }
-
-    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    fs::write(settings_path, json).map_err(|e| e.to_string())?;
-    Ok(())
+async fn save_settings(app: tauri::AppHandle, settings: Settings) -> Result<(), String> {
+    update_settings(settings)
 }
 
 #[tauri::command]
-async fn load_settings(app: tauri::AppHandle) -> Result<Settings, String> {
-    let settings_path = get_settings_path(&app);
-
-    // 如果文件不存在，返回默认设置
-    if !settings_path.exists() {
-        return Ok(Settings::default());
-    }
-
-    // 读取并解析设置文件
-    let content = fs::read_to_string(&settings_path).map_err(|e| e.to_string())?;
-
-    // 先尝试解析成 Value，这样我们可以检查和修复缺失的字段
-    let mut settings_value: serde_json::Value =
-        serde_json::from_str(&content).map_err(|e| format!("解析设置失败: {}", e))?;
-
-    // 获取默认设置
-    let default_settings = Settings::default();
-
-    // 检查并添加缺失的字段
-    if let Some(obj) = settings_value.as_object_mut() {
-        // 检查所有可能缺失的字段
-        let fields = [
-            ("auto_start", json!(default_settings.auto_start)),
-            ("auto_minimize", json!(default_settings.auto_minimize)),
-            ("refresh_interval", json!(default_settings.refresh_interval)),
-            (
-                "frequency_threshold",
-                json!(default_settings.frequency_threshold),
-            ),
-            ("frequency_mode", json!(default_settings.frequency_mode)),
-            (
-                "auto_switch_enabled",
-                json!(default_settings.auto_switch_enabled),
-            ),
-            (
-                "auto_switch_threshold",
-                json!(default_settings.auto_switch_threshold),
-            ),
-            (
-                "trigger_action_enabled",
-                json!(default_settings.trigger_action_enabled),
-            ),
-            (
-                "frequency_detection_enabled",
-                json!(default_settings.frequency_detection_enabled),
-            ),
-            (
-                "alert_debounce_seconds",
-                json!(default_settings.alert_debounce_seconds),
-            ),
-        ];
-
-        for (key, default_value) in fields.iter() {
-            if !obj.contains_key(*key) {
-                obj.insert(key.to_string(), default_value.clone());
-            }
-        }
-    }
-
-    // 将修复后的值转换为 Settings
-    let settings: Settings =
-        serde_json::from_value(settings_value).map_err(|e| format!("转换设置失败: {}", e))?;
-
-    // 保存修复后的设置
-    let json = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
-    fs::write(&settings_path, json).map_err(|e| e.to_string())?;
-
-    Ok(settings)
+async fn load_settings(_app: tauri::AppHandle) -> Result<Settings, String> {
+    get_settings()
 }
 
 // 修改 calcmhz 的频率获取函数
@@ -245,28 +177,28 @@ pub use power_plan::{
 };
 
 // 添加缺失的命令
-#[tauri::command]
-async fn update_monitor_settings(settings: Settings) -> Result<(), String> {
-    MONITOR.update_settings(settings).await;
-    Ok(())
-}
+// #[tauri::command]
+// async fn update_monitor_settings(settings: Settings) -> Result<(), String> {
+//     MONITOR.update_settings(settings).await;
+//     Ok(())
+// }
 
 #[tauri::command]
 async fn check_active_trigger_action(window: tauri::WebviewWindow) -> Result<bool, String> {
     Ok(MONITOR.has_active_trigger_action(&window).await)
 }
 
-#[tauri::command]
-async fn update_frequency_mode(mode: String) -> Result<(), String> {
-    MONITOR.update_frequency_mode(mode).await;
-    Ok(())
-}
+// #[tauri::command]
+// async fn update_frequency_mode(mode: String) -> Result<(), String> {
+//     MONITOR.update_frequency_mode(mode).await;
+//     Ok(())
+// }
 
-#[tauri::command]
-async fn update_auto_switch(enabled: bool, threshold: u64) -> Result<(), String> {
-    MONITOR.update_auto_switch(enabled, threshold).await;
-    Ok(())
-}
+// #[tauri::command]
+// async fn update_auto_switch(enabled: bool, threshold: u64) -> Result<(), String> {
+//     MONITOR.update_auto_switch(enabled, threshold).await;
+//     Ok(())
+// }
 
 #[tauri::command]
 async fn refresh_frequencies() -> Result<(), String> {
@@ -286,12 +218,16 @@ fn check_admin_privileges() -> bool {
 
 #[tauri::command]
 async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
-    let current_exe = std::env::current_exe()
-        .map_err(|e| format!("获取当前程序路径失败: {}", e))?;
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("获取当前程序路径失败: {}", e))?;
 
     // 添加管理员重启参数
     let params = "--admin-restart\0".encode_utf16().collect::<Vec<u16>>();
-    let path = current_exe.as_os_str().encode_wide().chain(Some(0)).collect::<Vec<_>>();
+    let path = current_exe
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
     let operation = "runas\0".encode_utf16().collect::<Vec<u16>>();
 
     unsafe {
@@ -301,7 +237,7 @@ async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
             path.as_ptr(),      // file
             params.as_ptr(),    // parameters (添加了重启参数)
             std::ptr::null(),   // directory
-            SW_SHOW,           // show command
+            SW_SHOW,            // show command
         );
 
         if result > 32 {
@@ -317,15 +253,15 @@ async fn request_admin_privileges(app: tauri::AppHandle) -> Result<(), String> {
 async fn open_external_link(url: String, app: tauri::AppHandle) -> Result<(), String> {
     let url_wide: Vec<u16> = format!("{}\0", url).encode_utf16().collect();
     let operation = "open\0".encode_utf16().collect::<Vec<u16>>();
-    
+
     unsafe {
         let result = ShellExecuteW(
             0,                  // hwnd
             operation.as_ptr(), // operation
-            url_wide.as_ptr(), // file
-            std::ptr::null(),  // parameters
-            std::ptr::null(),  // directory
-            SW_SHOW,           // show command
+            url_wide.as_ptr(),  // file
+            std::ptr::null(),   // parameters
+            std::ptr::null(),   // directory
+            SW_SHOW,            // show command
         );
 
         if result > 32 {
@@ -343,7 +279,7 @@ async fn toggle_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), St
             .map_err(|e| format!("获取程序路径失败: {}", e))?
             .to_string_lossy()
             .to_string();
-        
+
         setup_autostart(exe_path)?;
         enable_autostart()?;
     } else {
@@ -353,9 +289,89 @@ async fn toggle_autostart(enabled: bool, app: tauri::AppHandle) -> Result<(), St
 }
 
 #[tauri::command]
-async fn write_value_set_command(guid: &str, subgroup_guid: &str, setting_guid: &str, ac_value: u32, dc_value: u32) -> Result<(), String> {
+async fn write_value_set_command(
+    guid: &str,
+    subgroup_guid: &str,
+    setting_guid: &str,
+    ac_value: u32,
+    dc_value: u32,
+) -> Result<(), String> {
     info!("write_value_set_command: guid: {}, subgroup_guid: {}, setting_guid: {}, ac_value: {}, dc_value: {}", guid, subgroup_guid, setting_guid, ac_value, dc_value);
     write_value_set(guid, subgroup_guid, setting_guid, ac_value, dc_value)
+}
+
+#[tauri::command]
+async fn refresh_now_command() -> Result<(), String> {
+    MONITOR.refresh_now().await;
+    Ok(())
+}
+
+#[tauri::command]
+async fn toggle_trigger_action(app: tauri::AppHandle, action_id: String, enabled: bool) -> Result<(), String> {
+    // 如果要启用动作，先检查电源计划是否有效
+    if enabled {
+        // 获取动作详情
+        let action = get_trigger_action_by_id(&app, &action_id)
+            .await?
+            .ok_or_else(|| "找不到指定的触发动作".to_string())?;
+        
+        // 检查临时计划和目标计划是否都存在
+        if !check_if_scheme_is_valid(&action.temp_plan_guid) {
+            return Err("临时电源计划不存在，无法启用此触发动作".to_string());
+        }
+        
+        if !check_if_scheme_is_valid(&action.target_plan_guid) {
+            return Err("目标电源计划不存在，无法启用此触发动作".to_string());
+        }
+    }
+    
+    // 如果检查通过或是禁用操作，则更新状态
+    set_trigger_action_enabled(&app, &action_id, enabled).await
+}
+
+// 添加新函数用于检查触发动作的电源计划
+async fn check_trigger_actions_power_plans(app_handle: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
+    let actions = load_trigger_actions(app_handle.clone()).await?;
+    let mut has_invalid_plan = false;
+    let mut invalid_plans = Vec::new();
+    let mut invalid_action_ids = Vec::new();
+
+    // 只检查已启用的动作
+    for action in actions.iter().filter(|a| a.enabled) {
+        if !check_if_scheme_is_valid(&action.temp_plan_guid)
+            || !check_if_scheme_is_valid(&action.target_plan_guid)
+        {
+            has_invalid_plan = true;
+            invalid_plans.push(action.name.clone());
+            invalid_action_ids.push(action.id.clone());
+        }
+    }
+
+    if has_invalid_plan {
+        set_trigger_action_master_switch(false)?;
+
+        // 禁用包含无效计划的动作
+        for action_id in invalid_action_ids {
+            let _ = set_trigger_action_enabled(app_handle, &action_id, false).await;
+        }
+
+        // 发送通知
+        let invalid_plans_str = invalid_plans.join(", ");
+        let message = format!(
+            "以下已启用的触发动作包含不存在的电源计划：{}。已自动关闭触发动作功能。",
+            invalid_plans_str
+        );
+        send_notification( "触发动作已禁用", &message);
+        // 发送前端通知
+        window.emit("trigger-actions-disabled", message).unwrap_or_default();
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+async fn set_trigger_action_master_switch_command(enabled: bool) -> Result<(), String> {
+    set_trigger_action_master_switch(enabled)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -372,28 +388,30 @@ pub fn run() {
     let mut builder = tauri::Builder::default();
 
     let is_autostart = args.iter().any(|arg| arg == "--autostart");
-    
+
     // 添加单实例插件
     #[cfg(desktop)]
     {
-        builder = builder.plugin(tauri_plugin_single_instance::init(move |app_handle, argv, cwd| {
-            info!("检测到新实例启动，参数: {:?}, 工作目录: {:?}", argv, cwd);
-            
-            if let Some(window) = app_handle.get_webview_window("main") {
-                // 确保窗口可见
-                let _ = window.unminimize();
-                let _ = window.show();
-                // 设置焦点
-                let _ = window.set_focus();
-                
-                // 如果窗口被最小化了，恢复它
-                if let Ok(true) = window.is_minimized() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(
+            move |app_handle, argv, cwd| {
+                info!("检测到新实例启动，参数: {:?}, 工作目录: {:?}", argv, cwd);
+
+                if let Some(window) = app_handle.get_webview_window("main") {
+                    // 确保窗口可见
                     let _ = window.unminimize();
+                    let _ = window.show();
+                    // 设置焦点
+                    let _ = window.set_focus();
+
+                    // 如果窗口被最小化了，恢复它
+                    if let Ok(true) = window.is_minimized() {
+                        let _ = window.unminimize();
+                    }
+
+                    info!("已激活现有窗口");
                 }
-                
-                info!("已激活现有窗口");
-            }
-        }));
+            },
+        ));
     }
 
     builder
@@ -401,6 +419,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(move |app| {
+            // 初始化设置存储
+            init_settings_store(app.handle().clone())?;
+            // 初始化通知管理器
+            init_notification_manager(app.handle().clone())?;
+            
             // 获取主窗口
             let window = app.get_webview_window("main").unwrap();
             let window_clone = window.clone();
@@ -494,6 +517,15 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            // 检查触发动作中的电源计划
+            let app_handle = app.handle().clone();
+            let window_clone = window.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = check_trigger_actions_power_plans(&app_handle, &window_clone).await {
+                    error!("检查触发动作电源计划失败: {}", e);
+                }
+            });
+
             Ok(())
         })
         .manage(system)
@@ -513,10 +545,10 @@ pub fn run() {
             save_trigger_action,
             delete_trigger_action,
             load_trigger_actions,
-            update_monitor_settings,
+            // update_monitor_settings,
             check_active_trigger_action,
-            update_frequency_mode,
-            update_auto_switch,
+            // update_frequency_mode,
+            // update_auto_switch,
             refresh_frequencies,
             check_admin_privileges,
             request_admin_privileges,
@@ -528,6 +560,14 @@ pub fn run() {
             toggle_power_setting_liked,
             get_liked_power_settings,
             write_value_set_command,
+            refresh_now_command,
+            toggle_trigger_action,
+            set_trigger_action_master_switch_command,
+            get_settings,
+            // update_settings,
+            update_setting,
+            get_setting,
+            set_trigger_action_master_switch,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

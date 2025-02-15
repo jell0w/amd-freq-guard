@@ -1,4 +1,4 @@
-use crate::notification::send_notification;
+use crate::notification::{send_notification, send_notification_with_handle};
 use crate::power_plan::set_active_plan;
 use crate::settings::Settings;
 use crate::trigger_action::{load_trigger_actions, TriggerAction};
@@ -16,6 +16,9 @@ use tauri::Emitter;
 use tauri::{Manager, WebviewWindow};
 use tokio::sync::Mutex;
 use tokio::time::{interval as tokio_interval, Duration, Instant};
+use crate::settings_store;
+use tokio::task::JoinHandle;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 #[derive(Clone, Serialize)]
 pub struct MonitorState {
@@ -44,6 +47,8 @@ pub struct Monitor {
     window: Option<WebviewWindow>,
     last_alert_time: Arc<Mutex<u64>>,
     mode_auto_switched: Arc<Mutex<bool>>,
+    monitor_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    timer_version: Arc<AtomicU64>,
 }
 
 impl Monitor {
@@ -55,11 +60,64 @@ impl Monitor {
             window: None,
             last_alert_time: Arc::new(Mutex::new(0)),
             mode_auto_switched: Arc::new(Mutex::new(false)),
+            monitor_task: Arc::new(Mutex::new(None)),
+            timer_version: Arc::new(AtomicU64::new(0)),
         }
     }
 
     pub fn set_window(&mut self, window: WebviewWindow) {
         self.window = Some(window.clone());
+
+        // 注册设置钩子
+        let monitor = self.clone();
+        
+        // 监听频率检测开关
+        if let Ok(()) = settings_store::add_setting_hook("frequency_detection_enabled", move |_, value| {
+            info!("钩子-频率检测开关变化: {}", value);
+            let enabled = value.as_bool().unwrap_or(true);
+            let monitor = monitor.clone();
+            tauri::async_runtime::spawn(async move {
+                info!("钩子-频率检测开关变化: {}", enabled);
+                if !enabled {
+                    let mut running = monitor.running.write().await;
+                    *running = false;
+                } else {
+                    monitor.start().await;
+                }
+            });
+        }) {
+            info!("已注册频率检测开关钩子");
+        }
+
+        // 监听刷新间隔变化
+        let monitor = self.clone();
+        if let Ok(()) = settings_store::add_setting_hook("refresh_interval", move |_, value| {
+            if let Some(interval) = value.as_u64() {
+                let monitor = monitor.clone();
+                tauri::async_runtime::spawn(async move {
+                    info!("钩子-刷新间隔变化: {}", interval);
+                    // 直接重启监控
+                    monitor.start().await;
+                });
+            }
+        }) {
+            info!("已注册刷新间隔钩子");
+        }
+
+        //监听频率模式变化
+        let monitor = self.clone();
+        if let Ok(()) = settings_store::add_setting_hook("frequency_mode", move |_, value| {
+            if let Some(mode_str) = value.as_str() {
+                let mode = mode_str.to_string(); // 转换为拥有所有权的字符串
+                let monitor = monitor.clone();
+                tauri::async_runtime::spawn(async move {
+                    info!("钩子-频率模式变化: {}", mode);
+                    monitor.start().await;
+                });
+            }
+        }) {
+            info!("已注册频率模式钩子");
+        }
 
         // 在设置窗口时初始化监控器的设置
         let window_clone = window.clone();
@@ -85,85 +143,103 @@ impl Monitor {
         });
     }
 
-    pub async fn update_settings(&self, new_settings: Settings) {
-        let mut settings = self.settings.lock().await;
+    // pub async fn update_settings(&self, new_settings: Settings) {
+    //     let mut settings = self.settings.lock().await;
         
-        // 检查关键设置变化
-        let refresh_interval_changed = settings.refresh_interval != new_settings.refresh_interval;
-        let frequency_mode_changed = settings.frequency_mode != new_settings.frequency_mode;
-        let auto_switch_changed = settings.auto_switch_enabled != new_settings.auto_switch_enabled;
+    //     // 检查关键设置变化
+    //     let refresh_interval_changed = settings.refresh_interval != new_settings.refresh_interval;
+    //     let frequency_mode_changed = settings.frequency_mode != new_settings.frequency_mode;
+    //     let auto_switch_changed = settings.auto_switch_enabled != new_settings.auto_switch_enabled;
         
-        // 更新设置
-        *settings = new_settings;
-        drop(settings);
+    //     // 更新设置
+    //     *settings = new_settings;
+    //     drop(settings);
 
-        // 如果关键设置发生变化，重置相关状态
-        if refresh_interval_changed || frequency_mode_changed || auto_switch_changed {
-            let mut state = self.state.lock().await;
-            state.last_update_count = 0;
-            if frequency_mode_changed {
-                state.frequencies = Vec::new();
-            }
+    //     // 如果关键设置发生变化，重置相关状态
+    //     if refresh_interval_changed || frequency_mode_changed || auto_switch_changed {
+    //         let mut state = self.state.lock().await;
+    //         state.last_update_count = 0;
+    //         if frequency_mode_changed {
+    //             state.frequencies = Vec::new();
+    //         }
             
-            // 通知前端状态已更新
-            if let Some(window) = &self.window {
-                let _ = window.emit("monitor-state-updated", &*state);
-            }
-        }
-    }
+    //         // 通知前端状态已更新
+    //         if let Some(window) = &self.window {
+    //             let _ = window.emit("monitor-state-updated", &*state);
+    //         }
+    //     }
+    // }
 
     pub async fn get_state(&self) -> MonitorState {
         self.state.lock().await.clone()
     }
 
+
     pub async fn start(&self) {
-        let mut running = self.running.write().await;
-        if *running {
-            info!("监控器已经在运行中");
+        //如果开启状态为关，那也不用启动
+        if !settings_store::get_frequency_detection_enabled() {
+            info!("频率检测开关为关，不启动监控");
             return;
         }
-        *running = true;
-        info!("启动监控器");
-        drop(running);
-
+        // 更新版本号
+        let current_version = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+        self.timer_version.store(current_version, Ordering::SeqCst);
+        
+        *self.running.write().await = true;
+        
         let state = self.state.clone();
         let settings = self.settings.clone();
         let running = self.running.clone();
         let window = self.window.clone();
         let last_alert_time = self.last_alert_time.clone();
+        let version = self.timer_version.clone();
         let monitor = self.clone();
 
         tokio::spawn(async move {
-            let mut interval_timer = {
-                let settings = settings.lock().await;
-                tokio_interval(Duration::from_millis(settings.refresh_interval))
-            };
+            let mut interval_timer = tokio_interval(Duration::from_millis(settings_store::get_refresh_interval()));
             interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+            info!("新的监控器启动，版本号: {}，刷新间隔: {}ms", current_version, settings_store::get_refresh_interval());
+            
+            let current_version = version.load(Ordering::SeqCst);
 
             let mut last_frequencies: Vec<u64> = Vec::new();
             let mut unchanged_count = 0;
 
-            while *running.read().await {
+            while *running.read().await && version.load(Ordering::SeqCst) == current_version {
                 interval_timer.tick().await;
 
                 // 获取当前设置
                 let settings_guard = settings.lock().await;
-                let frequency_mode = settings_guard.frequency_mode.clone();
-                let frequency_threshold = settings_guard.frequency_threshold;
-                let trigger_action_enabled = settings_guard.trigger_action_enabled;
-                let auto_switch_enabled = settings_guard.auto_switch_enabled;
-                let refresh_interval = settings_guard.refresh_interval;
+                // let frequency_mode = settings_guard.frequency_mode.clone();
+                let frequency_mode = settings_store::get_frequency_mode();
+                // let frequency_threshold = settings_guard.frequency_threshold;
+                let frequency_threshold = settings_store::get_frequency_threshold();
+                let trigger_action_enabled = settings_store::get_trigger_action_enabled().unwrap_or(false);
+                // let auto_switch_enabled = settings_guard.auto_switch_enabled;
+                let auto_switch_enabled = settings_store::get_auto_switch_enabled();
+                // let refresh_interval = settings_guard.refresh_interval;
+                let refresh_interval = settings_store::get_refresh_interval();
                 drop(settings_guard);
 
                 // 检查是否需要更新定时器间隔
-                if interval_timer.period() != Duration::from_millis(refresh_interval) {
-                    interval_timer = tokio_interval(Duration::from_millis(refresh_interval));
-                    interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                    info!("更新刷新间隔为: {}ms", refresh_interval);
-                }
+                // if interval_timer.period() != Duration::from_millis(refresh_interval) {
+                //     interval_timer = tokio_interval(Duration::from_millis(refresh_interval));
+                //     interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+                //     info!("更新刷新间隔为: {}ms", refresh_interval);
+                // }
 
                 // 获取频率数据
                 let frequencies = Self::get_frequencies(&frequency_mode).await;
+
+                //如果版本不对，那就不用往下了
+                if version.load(Ordering::SeqCst) != current_version {
+                    info!("版本不对，不往下了");
+                    break;
+                }
 
                 // 只在启用自动切换时进行频率变化检测
                 if auto_switch_enabled && frequency_mode == "1" {
@@ -182,10 +258,7 @@ impl Monitor {
                     } else {
                         unchanged_count += 1;
                         // 获取阈值用于日志
-                        let threshold = {
-                            let settings = settings.lock().await;
-                            settings.auto_switch_threshold
-                        };
+                        let threshold = settings_store::get_auto_switch_threshold();
                         info!("频率未更新，计数: {}/{}", unchanged_count, threshold);
                     }
 
@@ -197,19 +270,12 @@ impl Monitor {
                     }
 
                     // 检查是否需要切换模式
-                    let threshold = {
-                        let settings = settings.lock().await;
-                        settings.auto_switch_threshold
-                    };
+                    let threshold = settings_store::get_auto_switch_threshold();
                     if unchanged_count >= threshold {
                         monitor.set_mode_auto_switched(true).await;
                         info!("触发自动切换到 CalcMhz 模式");
                         if let Some(window) = &window {
-                            send_notification(
-                                &window.app_handle(),
-                                "CPU频率检测模式自动变更",
-                                "由于在Sysinfo模式下频率长时间未更新，我们认为这是有问题的，自动切换到 CalcMhz 模式"
-                            );
+                            send_notification_with_handle(&window.app_handle(), "CPU频率检测模式自动变更", "由于在Sysinfo模式下频率长时间未更新，我们认为这是有问题的，自动切换到 CalcMhz 模式");
                             let _ = window.emit(
                                 "mode-switched",
                                 json!({
@@ -224,6 +290,7 @@ impl Monitor {
                         // 更新设置
                         let mut settings = settings.lock().await;
                         settings.frequency_mode = "2".to_string();
+                        drop(settings);
                         unchanged_count = 0;
                         continue;
                     }
@@ -293,12 +360,18 @@ impl Monitor {
                         trigger_action_enabled,
                         window,
                         last_alert_time.clone(),
-                        settings.lock().await.alert_debounce_seconds,
+                        // settings.lock().await.alert_debounce_seconds,
+                        settings_store::get_alert_debounce_seconds()
                     )
                     .await;
                 }
             }
-            info!("监控器已停止");
+            
+            info!("监控器停止: running={}, version={}/{}", 
+                *running.read().await, 
+                version.load(Ordering::SeqCst),
+                current_version
+            );
         });
     }
 
@@ -388,17 +461,9 @@ impl Monitor {
 
                 // 发送系统通知
                 if exceeded_count == frequencies.len() {
-                    send_notification(
-                        &window.app_handle(),
-                        "CPU 频率警告",
-                        &format!("所有核心频率均超过 {:.1} GHz", threshold),
-                    );
+                    send_notification("CPU 频率警告", &format!("所有核心频率均超过 {:.1} GHz", threshold));
                 } else {
-                    send_notification(
-                        &window.app_handle(),
-                        "CPU 频率警告",
-                        &format!("{} 个核心频率超过 {:.1} GHz", exceeded_count, threshold),
-                    );
+                    send_notification("CPU 频率警告", &format!("{} 个核心频率超过 {:.1} GHz", exceeded_count, threshold));
                 }
 
                 // 如果启用了触发动作，立即执行
@@ -438,24 +503,12 @@ impl Monitor {
     }
 
     async fn execute_trigger_action(action: &TriggerAction, app_handle: AppHandle) {
-        // if(action.version == "1.0.0"){
         info!("开始执行触发动作: {}", action.name);
-
-        // 发送开始执行的通知
-        // send_notification(
-        //     &app_handle,
-        //     "触发动作开始执行",
-        //     &format!("正在执行触发动作: {}", action.name)
-        // );
 
         // 切换到临时计划
         if let Err(e) = set_active_plan(&action.temp_plan_guid) {
             error!("切换到临时计划失败: {}", e);
-            send_notification(
-                &app_handle,
-                "触发动作执行失败",
-                &format!("切换到临时计划失败: {}", e),
-            );
+            send_notification_with_handle(&app_handle, "触发动作执行失败", &format!("切换到临时计划失败: {}", e));
             return;
         }
 
@@ -465,73 +518,61 @@ impl Monitor {
         // 切换到目标计划
         if let Err(e) = set_active_plan(&action.target_plan_guid) {
             error!("切换到目标计划失败: {}", e);
-            send_notification(
-                &app_handle,
-                "触发动作执行失败",
-                &format!("切换到目标计划失败: {}", e),
-            );
+            send_notification_with_handle(&app_handle, "触发动作执行失败", &format!("切换到目标计划失败: {}", e));
         } else {
-            send_notification(
-                &app_handle,
-                "触发动作执行完成",
-                &format!("成功执行触发动作: {}", action.name),
-            );
+            send_notification_with_handle(&app_handle, "触发动作执行完成", &format!("成功执行触发动作: {}", action.name));
         }
     }
 
-    pub async fn update_frequency_mode(&self, mode: String) {
-        self.set_mode_auto_switched(false).await;
-        // 先获取旧的模式
-        let old_mode = {
-            let settings = self.settings.lock().await;
-            settings.frequency_mode.clone()
-        };
+    // pub async fn update_frequency_mode(&self, mode: String) {
+    //     self.set_mode_auto_switched(false).await;
+    //     // 先获取旧的模式
+    //     let old_mode = {
+    //         let settings = self.settings.lock().await;
+    //         settings.frequency_mode.clone()
+    //     };
 
-        // 如果模式没有变化，直接返回
-        if old_mode == mode {
-            return;
-        }
+    //     // 如果模式没有变化，直接返回
+    //     if old_mode == mode {
+    //         return;
+    //     }
 
-        info!("切换频率检测模式: {} -> {}", old_mode, mode);
+    //     info!("切换频率检测模式: {} -> {}", old_mode, mode);
 
-        // 更新设置
-        {
-            let mut settings = self.settings.lock().await;
-            settings.frequency_mode = mode.clone();
-        }
+    //     // 更新设置
+    //     {
+    //         let mut settings = self.settings.lock().await;
+    //         settings.frequency_mode = mode.clone();
+    //     }
 
-        // 重置状态，与频率更新时的逻辑保持一致
-        if let Some(window) = &self.window {
-            let mut state = self.state.lock().await;
-            state.frequencies = Vec::new();
-            state.last_update_count = 0;
-            state.is_refreshing = true;
-            let _ = window.emit("monitor-state-updated", &*state);
-            drop(state);
+    //     // 重置状态，与频率更新时的逻辑保持一致
+    //     if let Some(window) = &self.window {
+    //         let mut state = self.state.lock().await;
+    //         state.frequencies = Vec::new();
+    //         state.last_update_count = 0;
+    //         state.is_refreshing = true;
+    //         let _ = window.emit("monitor-state-updated", &*state);
+    //         drop(state);
 
-            // 使用短延迟重置刷新状态
-            let window_clone = window.clone();
-            let state_clone = self.state.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                let mut state = state_clone.lock().await;
-                state.is_refreshing = false;
-                let _ = window_clone.emit("monitor-state-updated", &*state);
-            });
-        }
+    //         // 使用短延迟重置刷新状态
+    //         let window_clone = window.clone();
+    //         let state_clone = self.state.clone();
+    //         tokio::spawn(async move {
+    //             tokio::time::sleep(Duration::from_millis(200)).await;
+    //             let mut state = state_clone.lock().await;
+    //             state.is_refreshing = false;
+    //             let _ = window_clone.emit("monitor-state-updated", &*state);
+    //         });
+    //     }
 
-        // 发送模式切换通知
-        if let Some(window) = &self.window {
-            let mode_name = if mode == "1" { "SysInfo" } else { "CalcMhz" };
-            send_notification(
-                &window.app_handle(),
-                "模式已切换",
-                &format!("已切换到 {} 模式", mode_name),
-            );
-        }
+    //     // 发送模式切换通知
+    //     if let Some(window) = &self.window {
+    //         let mode_name = if mode == "1" { "SysInfo" } else { "CalcMhz" };
+    //         send_notification_with_handle(&window.app_handle(), "模式已切换", &format!("已切换到 {} 模式", mode_name));
+    //     }
 
-        info!("模式切换完成: {}", mode);
-    }
+    //     info!("模式切换完成: {}", mode);
+    // }
 
     pub async fn has_active_trigger_action(&self, window: &WebviewWindow) -> bool {
         if let Ok(actions) =
@@ -543,33 +584,34 @@ impl Monitor {
         }
     }
 
-    pub async fn update_auto_switch(&self, enabled: bool, threshold: u64) {
-        let mut settings = self.settings.lock().await;
-        settings.auto_switch_enabled = enabled;
+    // pub async fn update_auto_switch(&self, enabled: bool, threshold: u64) {
+    //     let mut settings = self.settings.lock().await;
+    //     settings.auto_switch_enabled = enabled;
         
-        // 根据启用状态设置阈值
-        settings.auto_switch_threshold = if enabled {
-            threshold.max(5) // 确保最小值为 5
-        } else {
-            20 // 关闭时设置为默认值 20
-        };
-        
-        drop(settings);
+    //     // 根据启用状态设置阈值
+    //     settings.auto_switch_threshold = if enabled {
+    //         threshold.max(5) // 确保最小值为 5
+    //     } else {
+    //         20 // 关闭时设置为默认值 20
+    //     };
+    //     drop(settings);
 
-        // 立即重置计数器
-        if let Some(window) = &self.window {
-            let mut state = self.state.lock().await;
-            state.last_update_count = 0;
-            let _ = window.emit("monitor-state-updated", &*state);
-        }
+    //     // 立即重置计数器
+    //     if let Some(window) = &self.window {
+    //         let mut state = self.state.lock().await;
+    //         state.last_update_count = 0;
+    //         let _ = window.emit("monitor-state-updated", &*state);
+    //     }
         
-        info!("自动切换状态更新: enabled={}, threshold={}", enabled, threshold);
-    }
+    //     info!("自动切换状态更新: enabled={}, threshold={}", enabled, threshold);
+    // }
 
     pub async fn refresh_now(&self) {
-        let settings = self.settings.lock().await;
-        let frequency_mode = settings.frequency_mode.clone();
-        drop(settings);
+        info!("立即刷新频率");
+        let frequency_mode = {
+            let settings = self.settings.lock().await;
+            settings.frequency_mode.clone()
+        };
 
         // 立即获取一次频率
         let frequencies = Self::get_frequencies(&frequency_mode).await;

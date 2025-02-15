@@ -60,6 +60,9 @@ pub fn get_power_plans() -> Result<Vec<PowerPlan>, String> {
     Ok(plans)
 }
 
+pub fn check_if_scheme_is_valid(guid: &str) -> bool {
+    PowerPlanController::check_if_scheme_is_valid(guid)
+}
 pub fn get_power_plans_json_by_scheme_guid(guid: &str)->Result<String,String>{
     PowerPlanController::get_power_plans_json_by_scheme_guid(guid)
 }
