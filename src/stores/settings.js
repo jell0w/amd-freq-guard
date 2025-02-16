@@ -7,21 +7,30 @@ import toast from '../utils/toast';
 
 let _isListenerSetup = false;
 let pendingUpdates = new Set();
+// 改用 Set 来跟踪正在回滚的键
+let rollbackKeys = new Set();
 
 // 统一防抖时间
 const DEFAULT_DEBOUNCE_TIME = 300;
 
-// 创建一个防抖的更新函数，接收store参数以便回退
+// 修改防抖函数，在回滚时设置标志位
 const debouncedUpdateSetting = debounce(async (store, key, value, oldValue) => {
   pendingUpdates.add(key);
   try {
     await invoker('update_setting', { key, value }, true);
   } catch (error) {
     console.error('设置更新失败:', error);
-    // 回退到旧值，使用 $patch 避免触发 subscribe
-    store.$patch({
-      [key]: oldValue
-    });
+    // 添加到回滚集合
+    rollbackKeys.add(key)
+    const rollback = () => {
+      store.$patch({
+        [key]: oldValue
+      });
+    }
+    rollback();
+    // console.log("Rollback setting:", { key, value, oldValue });
+    // console.log("Rollback keys:", JSON.stringify(rollbackKeys));
+    // 从回滚集合中移除
     toast.add({
       severity: 'error',
       summary: '设置失败',
@@ -30,6 +39,12 @@ const debouncedUpdateSetting = debounce(async (store, key, value, oldValue) => {
     });
   } finally {
     pendingUpdates.delete(key);
+    if (rollbackKeys.has(key)) {
+      //设置一个延迟
+      setTimeout(() => {
+        if(rollbackKeys.has(key))rollbackKeys.delete(key);
+      }, DEFAULT_DEBOUNCE_TIME);
+    }
   }
 }, DEFAULT_DEBOUNCE_TIME);
 
@@ -82,45 +97,23 @@ export const useSettingsStore = defineStore('settings', {
       Object.keys(this.$state).forEach(key => {
         if (key.startsWith('_')) return;
 
+        // 在 watch 中检查标志位
         watch(
           () => this[key],
           async (newValue, oldValue) => {
-            console.log("Update setting:", {key, newValue, oldValue});
+            // 检查这个具体的 key 是否在回滚中
+            if (rollbackKeys.has(key)) {
+              rollbackKeys.delete(key);
+              return
+            }
+
             if (pendingUpdates.has(key)) return;
+            console.log("Update setting:", { key, newValue, oldValue });
             debouncedUpdateSetting(this, key, newValue, oldValue);
           },
           watchOptions
         );
       });
-
-      // // 订阅状态变更
-      // this.$subscribe(
-      //   (mutation, state) => {
-      //     console.log('mutation', mutation, state);
-      //     // 只处理 patch 类型的更新
-      //     if (!mutation.type.includes('patch')) {
-      //       const { newValue, oldValue, key } = mutation.events;
-      //       console.log('newValue', newValue, 'oldValue', oldValue, 'key', key);
-
-      //       if (!pendingUpdates.has(key)) {
-      //         debouncedUpdateSetting(this, key, newValue, oldValue)
-      //       }
-
-      //       // Object.entries(mutation.payload).forEach(([key, value]) => {
-      //       //   if (!pendingUpdates.has(key)) {
-      //       //     // 保存旧值用于回退
-      //       //     const oldValue = state[key];
-      //       //     pendingUpdates.add(key);
-      //       //     debouncedUpdateSetting(this, key, value, oldValue)
-      //       //       .finally(() => {
-      //       //         pendingUpdates.delete(key);
-      //       //       });
-      //       //   }
-      //       // });
-      //     }
-      //   },
-      //   { detached: true } // 确保组件销毁后依然能执行
-      // );
 
       _isListenerSetup = true;
     }
