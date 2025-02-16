@@ -65,7 +65,7 @@ mod updater;
 use updater::check_update;
 
 mod constants;
-use constants::get_constants;
+use constants::{get_constants,AppConstants};
 
 mod PowerPlanUtils;
 use PowerPlanUtils::GetPowerPlans::write_value_set;
@@ -381,7 +381,8 @@ async fn check_terms_of_service() {
 
     let frequency_detection_enabled = get_setting("frequency_detection_enabled".to_string()).unwrap().as_bool().unwrap();
 
-    let current_terms_of_service_version = get_constants().get("CURRENT_TERMS_OF_SERVICE_VERSION").unwrap().as_u64().unwrap();
+    // let current_terms_of_service_version = get_constants().get("CURRENT_TERMS_OF_SERVICE_VERSION").unwrap().as_u64().unwrap();
+    let current_terms_of_service_version = AppConstants::CURRENT_TERMS_OF_SERVICE_VERSION;
 
     // 如果持久化的版本小于当前版本
     if accepted_terms_of_service != current_terms_of_service_version {
