@@ -20,10 +20,11 @@ import { onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { invoker } from '../utils/invoker';
 import Button from 'primevue/button';
-import { useToast } from 'primevue/usetoast';
+// import { useToast } from 'primevue/usetoast';
+import toast from '../utils/toast';
 
-const router = useRouter();
-const toast = useToast();
+// const router = useRouter();
+// const toast = useToast();
 
 async function requestAdmin() {
   try {

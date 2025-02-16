@@ -107,3 +107,25 @@ pub async fn get_trigger_action_by_id(app: &tauri::AppHandle, action_id: &str) -
     let actions = load_trigger_actions(app.clone()).await?;
     Ok(actions.into_iter().find(|a| a.id == action_id))
 }
+
+//获取所有动作的个数
+pub fn get_trigger_action_count(app: &tauri::AppHandle) -> Result<usize, String> {
+    // let actions = load_trigger_actions(app.clone()).await?;
+    let app = app.clone();
+    let handle = std::thread::spawn(move || {
+         tauri::async_runtime::block_on(load_trigger_actions(app))
+    });
+    let actions = handle.join().map_err(|_| "独立线程执行出错".to_string())??;
+    Ok(actions.len())
+}
+
+//获取所有启用的动作的个数
+pub fn get_trigger_action_enabled_count(app: &tauri::AppHandle) -> Result<usize, String> {
+    let app = app.clone();
+    let handle = std::thread::spawn(move || {
+         tauri::async_runtime::block_on(load_trigger_actions(app))
+    });
+    let actions = handle.join().map_err(|_| "独立线程执行出错".to_string())??;
+    Ok(actions.iter().filter(|a| a.enabled).count())
+}
+

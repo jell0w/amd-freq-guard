@@ -10,7 +10,8 @@ import Dropdown from 'primevue/dropdown';
 import InputNumber from 'primevue/inputnumber';
 import ToggleSwitch from 'primevue/toggleswitch';
 import { v4 as uuidv4 } from 'uuid';
-import { useToast } from 'primevue/usetoast';
+// import { useToast } from 'primevue/usetoast';
+import toast from '../utils/toast';
 import Message from 'primevue/message';
 import SelectButton from 'primevue/selectbutton';
 import { useSettingsStore } from '../stores/settings';
@@ -23,7 +24,7 @@ const isLoading = ref(false);
 const editDialog = ref(false);
 const editingAction = ref(null);
 // const triggerActionMasterSwitch = ref(false);
-const toast = useToast();
+// const toast = useToast();
 
 const settingsStore = useSettingsStore();
 const { trigger_action_enabled:triggerActionMasterSwitch, pending, error } = storeToRefs(settingsStore);
@@ -71,14 +72,14 @@ async function loadPowerPlans() {
 }
 
 // 加载设置
-async function loadSettings() {
-  try {
-    const settings = await invoker('load_settings');
-    triggerActionMasterSwitch.value = settings.trigger_action_enabled;
-  } catch (error) {
-    console.error('加载设置失败:', error);
-  }
-}
+// async function loadSettings() {
+//   try {
+//     const settings = await invoker('load_settings');
+//     triggerActionMasterSwitch.value = settings.trigger_action_enabled;
+//   } catch (error) {
+//     console.error('加载设置失败:', error);
+//   }
+// }
 
 // 显示编辑对话框
 function showEditDialog(action = null) {
@@ -162,25 +163,25 @@ function handleBack() {
 }
 
 // 修改保存设置函数，添加检查
-async function saveMasterSwitch() {
-  try {
-    // 如果要开启总开关，先检查是否有动作
-    if (triggerActionMasterSwitch.value && (!actions.value || actions.value.length === 0)) {
-      triggerActionMasterSwitch.value = false;  // 重置开关状态
-      toast.add({
-        severity: 'warn',
-        summary: '无法启用',
-        detail: '请先创建至少一个触发动作',
-        life: 3000
-      });
-      return;
-    }
+// async function saveMasterSwitch() {
+//   try {
+//     // 如果要开启总开关，先检查是否有动作
+//     if (triggerActionMasterSwitch.value && (!actions.value || actions.value.length === 0)) {
+//       triggerActionMasterSwitch.value = false;  // 重置开关状态
+//       toast.add({
+//         severity: 'warn',
+//         summary: '无法启用',
+//         detail: '请先创建至少一个触发动作',
+//         life: 3000
+//       });
+//       return;
+//     }
 
-    await settingsStore.updateSetting('trigger_action_enabled', triggerActionMasterSwitch.value);
-  } catch (error) {
-    console.error('保存设置失败:', error);
-  }
-}
+//     await settingsStore.updateSetting('trigger_action_enabled', triggerActionMasterSwitch.value);
+//   } catch (error) {
+//     console.error('保存设置失败:', error);
+//   }
+// }
 
 // 修改切换动作启用状态的函数
 async function handleActionToggle(action) {

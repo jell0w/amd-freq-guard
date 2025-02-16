@@ -76,15 +76,15 @@ impl Monitor {
             info!("钩子-频率检测开关变化: {}", value);
             let enabled = value.as_bool().unwrap_or(true);
             let monitor = monitor.clone();
-            tauri::async_runtime::spawn(async move {
-                info!("钩子-频率检测开关变化: {}", enabled);
-                if !enabled {
-                    let mut running = monitor.running.write().await;
-                    *running = false;
-                } else {
-                    monitor.start().await;
-                }
-            });
+            
+            // 直接启动，不等待
+            if !enabled {
+                monitor.timer_version.store(0, Ordering::SeqCst);
+            } else {
+                tauri::async_runtime::spawn(async move {
+                    monitor.start();
+                });
+            }
         }) {
             info!("已注册频率检测开关钩子");
         }
@@ -97,7 +97,7 @@ impl Monitor {
                 tauri::async_runtime::spawn(async move {
                     info!("钩子-刷新间隔变化: {}", interval);
                     // 直接重启监控
-                    monitor.start().await;
+                    monitor.start();
                 });
             }
         }) {
@@ -112,7 +112,7 @@ impl Monitor {
                 let monitor = monitor.clone();
                 tauri::async_runtime::spawn(async move {
                     info!("钩子-频率模式变化: {}", mode);
-                    monitor.start().await;
+                    monitor.start();
                 });
             }
         }) {
@@ -174,13 +174,18 @@ impl Monitor {
         self.state.lock().await.clone()
     }
 
+    pub async fn get_current_state(&self) -> MonitorState {
+        let state = self.state.lock().await;
+        state.clone()
+    }
 
-    pub async fn start(&self) {
+    pub fn start(&self) {
         //如果开启状态为关，那也不用启动
         if !settings_store::get_frequency_detection_enabled() {
             info!("频率检测开关为关，不启动监控");
             return;
         }
+
         // 更新版本号
         let current_version = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -188,17 +193,15 @@ impl Monitor {
             .as_millis() as u64;
         self.timer_version.store(current_version, Ordering::SeqCst);
         
-        *self.running.write().await = true;
-        
         let state = self.state.clone();
         let settings = self.settings.clone();
-        let running = self.running.clone();
         let window = self.window.clone();
         let last_alert_time = self.last_alert_time.clone();
         let version = self.timer_version.clone();
         let monitor = self.clone();
 
-        tokio::spawn(async move {
+        // 不使用 await，直接 spawn 新任务
+        tauri::async_runtime::spawn(async move {
             let mut interval_timer = tokio_interval(Duration::from_millis(settings_store::get_refresh_interval()));
             interval_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
@@ -209,11 +212,20 @@ impl Monitor {
             let mut last_frequencies: Vec<u64> = Vec::new();
             let mut unchanged_count = 0;
 
-            while *running.read().await && version.load(Ordering::SeqCst) == current_version {
-                interval_timer.tick().await;
+            let mut skip_interval_for_first_time = true;
 
+            while version.load(Ordering::SeqCst) == current_version && settings_store::get_frequency_detection_enabled() {
+                if skip_interval_for_first_time {
+                    skip_interval_for_first_time = false;
+                } else {
+                    interval_timer.tick().await;
+                }
+                if (version.load(Ordering::SeqCst) != current_version) || (settings_store::get_frequency_detection_enabled() == false) {
+                    info!("版本不对或者频率检测开关为关，不往下了");
+                    break;
+                }
                 // 获取当前设置
-                let settings_guard = settings.lock().await;
+                // let settings_guard = settings.lock().await;
                 // let frequency_mode = settings_guard.frequency_mode.clone();
                 let frequency_mode = settings_store::get_frequency_mode();
                 // let frequency_threshold = settings_guard.frequency_threshold;
@@ -223,7 +235,7 @@ impl Monitor {
                 let auto_switch_enabled = settings_store::get_auto_switch_enabled();
                 // let refresh_interval = settings_guard.refresh_interval;
                 let refresh_interval = settings_store::get_refresh_interval();
-                drop(settings_guard);
+                // drop(settings_guard);
 
                 // 检查是否需要更新定时器间隔
                 // if interval_timer.period() != Duration::from_millis(refresh_interval) {
@@ -236,8 +248,8 @@ impl Monitor {
                 let frequencies = Self::get_frequencies(&frequency_mode).await;
 
                 //如果版本不对，那就不用往下了
-                if version.load(Ordering::SeqCst) != current_version {
-                    info!("版本不对，不往下了");
+                if (version.load(Ordering::SeqCst) != current_version) || (settings_store::get_frequency_detection_enabled() == false) {
+                    info!("版本不对或者频率检测开关为关，不往下了");
                     break;
                 }
 
@@ -365,10 +377,10 @@ impl Monitor {
                     )
                     .await;
                 }
+                
             }
             
-            info!("监控器停止: running={}, version={}/{}", 
-                *running.read().await, 
+            info!("监控器停止: version={}/{}", 
                 version.load(Ordering::SeqCst),
                 current_version
             );
@@ -376,23 +388,27 @@ impl Monitor {
     }
 
     pub async fn stop(&self) {
-        let mut running = self.running.write().await;
-        if *running {
-            *running = false;
+        // let mut running = self.running.write().await;
+        // if *running {
+        //     *running = false;
 
-            // 重置状态
-            let mut state_guard = self.state.lock().await;
-            state_guard.last_update_count = 0;
-            state_guard.frequencies = Vec::new();
-            state_guard.is_refreshing = false;
+        //     // 重置状态
+        //     let mut state_guard = self.state.lock().await;
+        //     state_guard.last_update_count = 0;
+        //     state_guard.frequencies = Vec::new();
+        //     state_guard.is_refreshing = false;
 
-            // 如果有窗口，通知前端状态已重置
-            if let Some(window) = &self.window {
-                let _ = window.emit("monitor-state-updated", &*state_guard);
-            }
+        //     // 如果有窗口，通知前端状态已重置
+        //     if let Some(window) = &self.window {
+        //         let _ = window.emit("monitor-state-updated", &*state_guard);
+        //     }
 
-            info!("停止监控器");
-        }
+        //     info!("停止监控器");
+        // }
+
+        // 直接修改全局
+        self.timer_version.store(0, Ordering::SeqCst);
+        info!("停止监控器");
     }
 
     async fn get_frequencies(frequency_mode: &str) -> Vec<u64> {
@@ -648,4 +664,10 @@ impl Monitor {
 // 创建一个全局监控实例
 lazy_static::lazy_static! {
     pub static ref MONITOR: Monitor = Monitor::new();
+}
+
+// 添加一个 tauri 命令
+#[tauri::command]
+pub async fn get_monitor_state() -> Result<MonitorState, String> {
+    Ok(MONITOR.get_current_state().await)
 }

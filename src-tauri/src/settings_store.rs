@@ -92,6 +92,7 @@ impl SettingsStore {
                 ("trigger_action_enabled", json!(default_settings.trigger_action_enabled)),
                 ("frequency_detection_enabled", json!(default_settings.frequency_detection_enabled)),
                 ("alert_debounce_seconds", json!(default_settings.alert_debounce_seconds)),
+                ("accepted_terms_of_service", json!(default_settings.accepted_terms_of_service)),   
             ];
 
             for (key, default_value) in fields.iter() {
@@ -368,6 +369,12 @@ impl SettingsStore {
                 //     return Err("模拟出故障".to_string());
                 // }
 
+                //检查是否大于等于启用的动作个数
+                let enabled_count = crate::trigger_action::get_trigger_action_count(&self.app.clone()).unwrap_or(0);
+                if value.as_bool().unwrap_or(false) && enabled_count == 0 {
+                    return Err("没有可用的触发动作，请先去添加至少一个触发动作".to_string());
+                }
+
                 settings.trigger_action_enabled = value.as_bool()
                     .ok_or("无效的值类型")?;
             },
@@ -382,6 +389,10 @@ impl SettingsStore {
                 }
 
                 settings.alert_debounce_seconds = value.as_u64()
+                    .ok_or("无效的值类型")?;
+            },
+            "accepted_terms_of_service" => {
+                settings.accepted_terms_of_service = value.as_u64()
                     .ok_or("无效的值类型")?;
             },
             _ => return Err(format!("未知的设置项: {}", key))
@@ -441,6 +452,7 @@ impl SettingsStore {
             "trigger_action_enabled" => Ok(serde_json::Value::Bool(settings.trigger_action_enabled)),
             "frequency_detection_enabled" => Ok(serde_json::Value::Bool(settings.frequency_detection_enabled)),
             "alert_debounce_seconds" => Ok(serde_json::Value::Number(settings.alert_debounce_seconds.into())),
+            "accepted_terms_of_service" => Ok(serde_json::Value::Number(settings.accepted_terms_of_service.into())),
             _ => Err(format!("未知的设置项: {}", key))
         }
     }
@@ -471,6 +483,11 @@ impl SettingsStore {
             }
         }
     }
+}
+
+pub fn set_accepted_terms_of_service_in_store(version: u64) -> Result<(), String> {
+    let store = get_store()?;
+    store.set_setting("accepted_terms_of_service", version)
 }
 
 // 初始化函数
@@ -582,6 +599,12 @@ pub async fn update_setting(key: String, value: serde_json::Value) -> Result<(),
     info!("Received update_setting command with key: {}, value: {}", key, value);
     let store = get_store()?;
     store.validate_and_update_setting(&key, value).await
+}
+
+pub async fn update_setting_in_store(key: String, value: serde_json::Value) -> Result<(), String> {
+    info!("更新设置: {} = {}", key, value);
+    let store = get_store()?;
+    store.set_setting(&key, value)
 }
 
 #[tauri::command]

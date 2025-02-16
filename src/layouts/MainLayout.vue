@@ -22,7 +22,7 @@ const settingsStore = useSettingsStore();
 
 <template>
   <div class="layout-container">
-    <Toast />
+
     <!-- 使用 keep-alive 包装路由视图 -->
     <router-view v-slot="{ Component }">
       <keep-alive>

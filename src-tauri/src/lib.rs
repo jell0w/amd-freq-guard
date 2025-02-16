@@ -374,6 +374,34 @@ async fn set_trigger_action_master_switch_command(enabled: bool) -> Result<(), S
     set_trigger_action_master_switch(enabled)
 }
 
+
+// 添加新函数检查服务条款版本
+async fn check_terms_of_service() {
+    let accepted_terms_of_service = get_setting("accepted_terms_of_service".to_string()).unwrap();
+
+    let frequency_detection_enabled = get_setting("frequency_detection_enabled".to_string()).unwrap().as_bool().unwrap();
+
+    let current_terms_of_service_version = get_constants().get("CURRENT_TERMS_OF_SERVICE_VERSION").unwrap().as_u64().unwrap();
+
+    // 如果持久化的版本小于当前版本
+    if accepted_terms_of_service != current_terms_of_service_version {
+        // 检查频率检测是否开启
+        if frequency_detection_enabled {
+            let update_result = settings_store::update_setting_in_store("frequency_detection_enabled".to_string(), json!(false)).await;
+            //判断一下是否返回OK还是返回错误
+            if let Err(e) = update_result {
+                error!("更新设置失败: {}", e);
+            } else {
+                send_notification(
+                    "服务条款已更新",
+                    "请阅读并同意新的服务条款后继续使用频率检测功能"
+                );
+            }
+        }
+    }
+
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 初始化日志
@@ -424,9 +452,15 @@ pub fn run() {
             // 初始化通知管理器
             init_notification_manager(app.handle().clone())?;
             
+            tauri::async_runtime::spawn(async move {
+            // 检查服务条款版本
+            check_terms_of_service().await;
+            });
+            
             // 获取主窗口
             let window = app.get_webview_window("main").unwrap();
             let window_clone = window.clone();
+            // window.open_devtools();
 
             // 设置窗口标题，包含版本号
             let version = app.package_info().version.to_string();
@@ -459,7 +493,7 @@ pub fn run() {
                 let mut monitor = MONITOR.clone();
                 monitor.set_window(window.clone());
                 tauri::async_runtime::spawn(async move {
-                    monitor.start().await;
+                    monitor.start()
                 });
             }
 
@@ -568,6 +602,7 @@ pub fn run() {
             update_setting,
             get_setting,
             set_trigger_action_master_switch,
+            monitor::get_monitor_state,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

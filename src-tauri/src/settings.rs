@@ -12,6 +12,7 @@ pub struct Settings {
     pub trigger_action_enabled: bool,
     pub frequency_detection_enabled: bool,
     pub alert_debounce_seconds: u64,
+    pub accepted_terms_of_service: u64,
 }
 
 impl Default for Settings {
@@ -19,14 +20,16 @@ impl Default for Settings {
         Self {
             auto_start: false,
             auto_minimize: false,
-            refresh_interval: 1000,
-            frequency_threshold: 3.5,
+            refresh_interval: 5000,
+            frequency_threshold: 2.9,
             frequency_mode: "1".to_string(),
             auto_switch_enabled: false,
-            auto_switch_threshold: 25,
+            auto_switch_threshold: 15,
             trigger_action_enabled: false,
-            frequency_detection_enabled: true,
-            alert_debounce_seconds: 15,
+            frequency_detection_enabled: false,
+            alert_debounce_seconds: 10,
+            accepted_terms_of_service: 0,
         }
     }
 }
+

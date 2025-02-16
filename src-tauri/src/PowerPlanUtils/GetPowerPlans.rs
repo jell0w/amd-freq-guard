@@ -942,7 +942,6 @@ pub fn check_if_scheme_is_valid(guid_str: &str) -> bool {
 
 
 #[derive(Debug, Serialize)]
-
 pub struct UnifiedPowerSetting {
     pub setting: PowerSetting,
     pub current_value: PowerSettingValue,

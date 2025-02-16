@@ -6,6 +6,7 @@ import Aura from '@primevue/themes/aura';
 import ToastService from 'primevue/toastservice';
 import Tooltip from 'primevue/tooltip';
 import { createPinia } from 'pinia';
+// import {EventPlugin} from "@pinia/events"
 import { useSettingsStore } from './stores/settings';
 
 import 'primeicons/primeicons.css'

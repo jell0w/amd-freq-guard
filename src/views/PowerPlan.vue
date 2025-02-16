@@ -8,7 +8,7 @@ import Menu from 'primevue/menu';
 import { useRouter } from 'vue-router';
 import Dialog from 'primevue/dialog';
 import InputText from 'primevue/inputtext';
-import { useToast } from 'primevue/usetoast';
+// import { useToast } from 'primevue/usetoast';
 import PanelMenu from 'primevue/panelmenu';
 import InputNumber from 'primevue/inputnumber';
 import Slider from 'primevue/slider';
@@ -21,8 +21,8 @@ import SelectButton from 'primevue/selectbutton';
 
 
 
-const toast = useToast();
-
+// const toast = useToast();
+import toast from '../utils/toast';
 const router = useRouter();
 const powerPlans = ref([]);
 const isLoading = ref(false);

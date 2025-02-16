@@ -10,15 +10,18 @@ import Button from 'primevue/button';
 import SelectButton from 'primevue/selectbutton';
 import Dialog from 'primevue/dialog';
 import Message from 'primevue/message';
-import { useToast } from 'primevue/usetoast';
+// import { useToast } from 'primevue/usetoast';
 import { listen } from '@tauri-apps/api/event';
 import Skeleton from 'primevue/skeleton';
 import { getVersion } from '@tauri-apps/api/app';
-import { getGithubRepoURL } from './utils/Constants';
+import { getGithubRepoURL, getTermsOfServiceTargetVersion } from './utils/Constants';
 import { useSettingsStore } from './stores/settings';
 import { storeToRefs } from 'pinia';
+import toast from './utils/toast';
 
-const toast = useToast();
+import Toast from 'primevue/toast';
+
+// const toast = useToast();
 
 const settingsStore = useSettingsStore();
 const { trigger_action_enabled: triggerActionEnabled,
@@ -31,7 +34,7 @@ const { trigger_action_enabled: triggerActionEnabled,
   alert_debounce_seconds:alertDebounceSeconds,
   auto_start:autoStart,
   auto_minimize:autoMinimize,
-  
+  accepted_terms_of_service:acceptedTermsOfService,
  } = storeToRefs(settingsStore);
 
 const cpuFrequencies = ref([]);
@@ -70,7 +73,7 @@ const modeDescriptions = {
 const unchangedCount = ref(0);
 const lastFrequencies = ref([]);
 const lastUpdateCount = ref(0);
-const triggerActions = ref([]);
+// const triggerActions = ref([]);
 const frequencyModes = [
   { label: 'SysInfo', value: "1", icon: 'pi pi-th-large', desc: '多核心检测' },
   { label: 'CalcMhz', value: "2", icon: 'pi pi-stop', desc: '主频检测' }
@@ -82,6 +85,19 @@ const eventListeners = ref([]);
 
 const isCheckingUpdate = ref(false);
 
+// 服务条款对话框
+const termsDialog = ref(false);
+const termsContent = ref(`
+1. 本软件用于监控 CPU 频率，可能会对系统性能产生影响
+2. 本软件需要管理员权限来执行某些操作
+3. 使用本软件时请注意：
+   - 修改电源计划可能影响系统稳定性
+   - 本软件提供修改隐藏的Windows高级电源设置的入口，请谨慎修改
+   - 软件的建议和操作仅供参考，请根据实际情况使用
+4. 开发者不对使用本软件造成的任何问题负责
+
+如果您同意以上条款，请点击"同意"按钮继续使用。
+`);
 
 // 修改事件监听器设置函数
 async function setupEventListeners() {
@@ -199,25 +215,40 @@ async function setupEventListeners() {
   eventListeners.value.push(triggerActionDisabledListener);
 }
 
-async function loadTriggerActions() {
-  try {
-    const actions = await invoker('load_trigger_actions');
-    triggerActions.value = Array.isArray(actions) ? actions : [];
-    console.log('加载的触发动作:', triggerActions.value);
-  } catch (error) {
-    console.error('加载触发动作失败:', error);
-    triggerActions.value = [];
-  }
-}
+// async function loadTriggerActions() {
+//   try {
+//     const actions = await invoker('load_trigger_actions');
+//     triggerActions.value = Array.isArray(actions) ? actions : [];
+//     console.log('加载的触发动作:', triggerActions.value);
+//   } catch (error) {
+//     console.error('加载触发动作失败:', error);
+//     triggerActions.value = [];
+//   }
+// }
 
 onMounted(async () => {
   console.log("data in pinia:", settingsStore.$state);
+  await checkTermsOfService();
   checkUpdate(true, true, true);
   // await loadSettings();
-  await loadTriggerActions();
+  // await loadTriggerActions();
   await setupEventListeners();
 
   console.log('当前版本号:', await getVersion());
+
+  // 获取初始状态
+  try {
+    const initialState = await invoker('get_monitor_state');
+    // 更新状态
+    cpuFrequencies.value = initialState.frequencies;
+    indicatorStatus.value = initialState.indicator_status;
+    lastUpdateCount.value = initialState.last_update_count;
+    isRefreshing.value = initialState.is_refreshing;
+
+    console.log('初始状态:', initialState);
+  } catch (error) {
+    console.error('获取监控器状态失败:', error);
+  }
 
   // 使用更长的间隔检查触发动作状态
   // checkTimer.value = setInterval(checkTriggerActionStatus, 10000);
@@ -342,9 +373,25 @@ async function handleFrequencyModeChange(value) {
   cpuFrequencies.value = [];
 }
 
+// 检查服务条款版本
+async function checkTermsOfService() {
+  const targetVersion = await getTermsOfServiceTargetVersion();
+  if (acceptedTermsOfService.value < targetVersion) {
+    termsDialog.value = true;
+  }
+}
+
+// 同意服务条款
+async function acceptTerms() {
+  const targetVersion = await getTermsOfServiceTargetVersion();
+  acceptedTermsOfService.value = targetVersion;
+  termsDialog.value = false;
+}
+
 </script>
 
 <template>
+  <Toast />
   <div class="refresh-indicator" :class="{
     'refreshing': isRefreshing,
     'warning': indicatorStatus === 'warning',
@@ -377,11 +424,11 @@ async function handleFrequencyModeChange(value) {
           <div class="setting-subsection">
             <div class="setting-item">
               <span>触发动作处理器</span>
-              <ToggleSwitch v-model="triggerActionEnabled" :disabled="!triggerActions.length > 0"/>
+              <ToggleSwitch v-model="triggerActionEnabled"/>
                 <p>当触发报警时执行已启用的触发动作</p>
-              <Message v-if="!triggerActions.length > 0" severity="warn" class="switch-message">
+              <!-- <Message v-if="!triggerActions.length > 0" severity="warn" class="switch-message">
                 请先在触发动作管理中创建至少一个动作
-              </Message>
+              </Message> -->
             </div>
           </div>
         </div>
@@ -413,7 +460,7 @@ async function handleFrequencyModeChange(value) {
               </i>
             </span>
             <div class="interval-control">
-              <Slider v-model="refreshInterval" :min="320" :max="5000" :step="10" class="custom-slider"
+              <Slider v-model="refreshInterval" :min="1000" :max="25000" :step="10" class="custom-slider"
                  />
               <InputNumber v-model="refreshInterval" :min="320" suffix=" 毫秒" />
               <Message v-if="(refreshInterval < 2000) && frequencyMode === '2'" severity="warn" variant="outlined"
@@ -588,13 +635,23 @@ async function handleFrequencyModeChange(value) {
       </div>
     </div>
   </Dialog>
+
+  <!-- 服务条款对话框 -->
+  <Dialog v-model:visible="termsDialog" 
+    modal 
+    :closable="false"
+    :style="{ width: '40rem' }" 
+    header="服务条款和使用须知">
+    <div class="terms-content">
+      <pre style="white-space: pre-wrap; font-family: inherit;">{{ termsContent }}</pre>
+    </div>
+    <template #footer>
+      <Button label="同意" @click="acceptTerms" />
+    </template>
+  </Dialog>
 </template>
 
 <style>
-
-
-
-
 .container {
   height: 100vh;
   overflow: hidden;
@@ -1039,6 +1096,13 @@ h2 {
   border: 1px solid var(--outline-color);
   border-radius: 8px;
   box-shadow: var(--card-shadow);
+}
+
+.terms-content {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 1rem;
+  line-height: 1.5;
 }
 </style>
 

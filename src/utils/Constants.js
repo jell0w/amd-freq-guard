@@ -19,5 +19,9 @@ export async function getGithubRepoURL() {
     return await getConstant('GITHUB_REPO_URL');
 }
 
+export async function getTermsOfServiceTargetVersion() {
+    return await getConstant('CURRENT_TERMS_OF_SERVICE_VERSION');
+}
+
 // 为了方便使用，也提供直接访问的方式
 // export const GITHUB_REPO_URL = await getConstant('GITHUB_REPO');
