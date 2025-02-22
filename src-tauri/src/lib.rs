@@ -4,6 +4,7 @@ use env_logger;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{self, json};
+use trigger_action::is_valid_trigger_action;
 use std::fmt;
 use std::os::windows::ffi::OsStrExt;
 use std::thread;
@@ -315,13 +316,9 @@ async fn toggle_trigger_action(app: tauri::AppHandle, action_id: String, enabled
             .await?
             .ok_or_else(|| "找不到指定的触发动作".to_string())?;
         
-        // 检查临时计划和目标计划是否都存在
-        if !check_if_scheme_is_valid(&action.temp_plan_guid) {
-            return Err("临时电源计划不存在，无法启用此触发动作".to_string());
-        }
-        
-        if !check_if_scheme_is_valid(&action.target_plan_guid) {
-            return Err("目标电源计划不存在，无法启用此触发动作".to_string());
+        // 检查电源计划是否有效
+        if let Err(e) = is_valid_trigger_action(&action).await {
+            return Err(e);
         }
     }
     
@@ -338,33 +335,38 @@ async fn check_trigger_actions_power_plans(app_handle: &tauri::AppHandle, window
 
     // 只检查已启用的动作
     for action in actions.iter().filter(|a| a.enabled) {
-        if !check_if_scheme_is_valid(&action.temp_plan_guid)
-            || !check_if_scheme_is_valid(&action.target_plan_guid)
-        {
-            has_invalid_plan = true;
+        if let Err(e) = is_valid_trigger_action(&action).await {
+            // has_invalid_plan = true;
+            error!("检查触发动作电源计划失败: {}", e);
+            // 发送通知，告诉用户触发动作的名字和原因
+            send_notification("触发动作已禁用", &format!("{} 触发动作已禁用: {}", action.name, e));
+            // 发送前端通知
+            window.emit("trigger-actions-disabled", e).unwrap_or_default();
+            // 禁用包含无效计划的动作
+            let _ = set_trigger_action_enabled(app_handle, &action.id, false).await;
             invalid_plans.push(action.name.clone());
             invalid_action_ids.push(action.id.clone());
         }
     }
 
-    if has_invalid_plan {
-        set_trigger_action_master_switch(false)?;
+    // if has_invalid_plan {
+    //     set_trigger_action_master_switch(false)?;
 
-        // 禁用包含无效计划的动作
-        for action_id in invalid_action_ids {
-            let _ = set_trigger_action_enabled(app_handle, &action_id, false).await;
-        }
+    //     // 禁用包含无效计划的动作
+    //     for action_id in invalid_action_ids {
+    //         let _ = set_trigger_action_enabled(app_handle, &action_id, false).await;
+    //     }
 
-        // 发送通知
-        let invalid_plans_str = invalid_plans.join(", ");
-        let message = format!(
-            "以下已启用的触发动作包含不存在的电源计划：{}。已自动关闭触发动作功能。",
-            invalid_plans_str
-        );
-        send_notification( "触发动作已禁用", &message);
-        // 发送前端通知
-        window.emit("trigger-actions-disabled", message).unwrap_or_default();
-    }
+    //     // 发送通知
+    //     let invalid_plans_str = invalid_plans.join(", ");
+    //     let message = format!(
+    //         "以下已启用的触发动作包含不存在的电源计划：{}。已自动关闭触发动作功能。",
+    //         invalid_plans_str
+    //     );
+    //     send_notification( "触发动作已禁用", &message);
+    //     // 发送前端通知
+    //     window.emit("trigger-actions-disabled", message).unwrap_or_default();
+    // }
 
     Ok(())
 }

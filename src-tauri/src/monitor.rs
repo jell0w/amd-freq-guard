@@ -19,7 +19,7 @@ use tokio::time::{interval as tokio_interval, Duration, Instant};
 use crate::settings_store;
 use tokio::task::JoinHandle;
 use std::sync::atomic::{AtomicU64, Ordering};
-
+use crate::trigger_action;
 #[derive(Clone, Serialize)]
 pub struct MonitorState {
     pub frequencies: Vec<u64>,
@@ -346,12 +346,16 @@ impl Monitor {
                                     
                                     // 执行触发动作
                                     if let Ok(actions) = load_trigger_actions(window.app_handle().clone()).await {
-                                        for action in actions {
-                                            if action.enabled {
-                                                Self::execute_trigger_action(&action, window.app_handle().clone()).await;
-                                                break; // 只执行第一个启用的动作
-                                            }
+                                        if let Some(active_action) = actions.iter().find(|a| a.enabled) {
+                                            info!("发现活动的触发动作，准备执行: {}", active_action.name);
+                                            trigger_action::execute_trigger_action(
+                                                active_action,
+                                            ).await;
+                                        } else {
+                                            warn!("未找到已启用的触发动作");
                                         }
+                                    } else {
+                                        error!("加载触发动作失败");
                                     }
                                 }
                                 break; // 找到一个超过阈值的就足够了
@@ -484,17 +488,12 @@ impl Monitor {
 
                 // 如果启用了触发动作，立即执行
                 if trigger_action_enabled {
-                    if let Ok(actions) =
-                        crate::trigger_action::load_trigger_actions(window.app_handle().clone())
-                            .await
-                    {
+                    if let Ok(actions) = trigger_action::load_trigger_actions(window.app_handle().clone()).await {
                         if let Some(active_action) = actions.iter().find(|a| a.enabled) {
                             info!("发现活动的触发动作，准备执行: {}", active_action.name);
-                            Self::execute_trigger_action(
+                            trigger_action::execute_trigger_action(
                                 active_action,
-                                window.app_handle().clone(),
-                            )
-                            .await;
+                            ).await;
                         } else {
                             warn!("未找到已启用的触发动作");
                         }
@@ -516,28 +515,6 @@ impl Monitor {
                 "normal"
             },
         );
-    }
-
-    async fn execute_trigger_action(action: &TriggerAction, app_handle: AppHandle) {
-        info!("开始执行触发动作: {}", action.name);
-
-        // 切换到临时计划
-        if let Err(e) = set_active_plan(&action.temp_plan_guid) {
-            error!("切换到临时计划失败: {}", e);
-            send_notification_with_handle(&app_handle, "触发动作执行失败", &format!("切换到临时计划失败: {}", e));
-            return;
-        }
-
-        // 等待指定时间
-        tokio::time::sleep(Duration::from_secs(action.pause_seconds as u64)).await;
-
-        // 切换到目标计划
-        if let Err(e) = set_active_plan(&action.target_plan_guid) {
-            error!("切换到目标计划失败: {}", e);
-            send_notification_with_handle(&app_handle, "触发动作执行失败", &format!("切换到目标计划失败: {}", e));
-        } else {
-            send_notification_with_handle(&app_handle, "触发动作执行完成", &format!("成功执行触发动作: {}", action.name));
-        }
     }
 
     // pub async fn update_frequency_mode(&self, mode: String) {
@@ -592,7 +569,7 @@ impl Monitor {
 
     pub async fn has_active_trigger_action(&self, window: &WebviewWindow) -> bool {
         if let Ok(actions) =
-            crate::trigger_action::load_trigger_actions(window.app_handle().clone()).await
+            trigger_action::load_trigger_actions(window.app_handle().clone()).await
         {
             actions.iter().any(|a| a.enabled)
         } else {

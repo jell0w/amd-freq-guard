@@ -4,28 +4,52 @@ use tauri::{AppHandle, Manager};
 use std::env;
 use std::path::Path;
 use uuid;
+use std::time::Duration;
+use log;
 
-#[derive(Serialize, Deserialize, Clone)]
-pub struct TriggerAction {
-    pub id: String, // UUID
-    pub name: String,
-    pub temp_plan_guid: String,   // 临时计划 A 的 GUID
-    pub target_plan_guid: String, // 目标计划 B 的 GUID
-    pub pause_seconds: u32,       // 停顿时间（秒）
-    pub enabled: bool,            // 是否启用
-    pub version: String,          // 添加版本字段
+use crate::notification::send_notification;
+use crate::power_plan::{check_if_scheme_is_valid, set_active_plan};
+
+// 定义不同类型的执行体
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]  // 使用 untagged 让序列化时不包含类型标记
+pub enum TriggerActionWorker {
+    Simple {
+        temp_plan_guid: String,
+        pause_seconds: u32,
+        target_plan_guid: String,
+    },
+    SettingSwitch {
+        // 未来实现
+    },
+    Workflow {
+        // 未来实现
+    }
 }
 
+// 修改触发动作结构体
+#[derive(Serialize, Deserialize, Clone)]
+pub struct TriggerAction {
+    pub id: String,
+    pub name: String,
+    pub version: String,  // "simple", "setting_switch", "workflow"
+    pub enabled: bool,
+    pub worker: TriggerActionWorker,
+}
+
+// 实现默认值
 impl Default for TriggerAction {
     fn default() -> Self {
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             name: String::new(),
-            temp_plan_guid: String::new(),
-            target_plan_guid: String::new(),
-            pause_seconds: 30,
-            enabled: true,
-            version: "simple".to_string(), // 默认为简单版本
+            version: "simple".to_string(),
+            enabled: false,
+            worker: TriggerActionWorker::Simple {
+                temp_plan_guid: String::new(),
+                pause_seconds: 1,
+                target_plan_guid: String::new(),
+            },
         }
     }
 }
@@ -129,3 +153,68 @@ pub fn get_trigger_action_enabled_count(app: &tauri::AppHandle) -> Result<usize,
     Ok(actions.iter().filter(|a| a.enabled).count())
 }
 
+pub async fn execute_trigger_action(action: &TriggerAction) {
+    log::info!("开始执行触发动作: {}", action.name);
+
+    match action.version.as_str() {
+        "simple" => {
+            if let TriggerActionWorker::Simple { temp_plan_guid, pause_seconds, target_plan_guid } = &action.worker {
+                // 执行简单模式的逻辑
+                if let Err(e) = set_active_plan(temp_plan_guid) {
+                    log::error!("切换到临时计划失败: {}", e);
+                    send_notification("触发动作执行失败", &format!("切换到临时计划失败: {}", e));
+                    return;
+                }
+
+                tokio::time::sleep(Duration::from_secs(*pause_seconds as u64)).await;
+
+                if let Err(e) = set_active_plan(target_plan_guid) {
+                    log::error!("切换到目标计划失败: {}", e);
+                    send_notification("触发动作执行失败", &format!("切换到目标计划失败: {}", e));
+                } else {
+                    send_notification("触发动作执行完成", &format!("成功执行触发动作: {}", action.name));
+                }
+            }
+        },
+        "setting_switch" => {
+            // 未来实现
+        },
+        "workflow" => {
+            // 未来实现
+        },
+        _ => log::error!("未知的触发动作类型: {}", action.version)
+    }
+}
+
+pub async fn is_valid_trigger_action(action: &TriggerAction) -> Result<(), String> {
+    match action.version.as_str() {
+        "simple" => {
+            if let TriggerActionWorker::Simple { temp_plan_guid, target_plan_guid, pause_seconds } = &action.worker {
+                //逐个检查并抛出异常
+                if !check_if_scheme_is_valid(temp_plan_guid) {
+                    log::error!("临时计划不存在: {}", temp_plan_guid);
+                    return Err(format!("临时计划不存在: {}", temp_plan_guid));
+                }
+                if !check_if_scheme_is_valid(target_plan_guid) {
+                    log::error!("目标计划不存在: {}", target_plan_guid);
+                    return Err(format!("目标计划不存在: {}", target_plan_guid));
+                }
+                //检查pause_seconds
+                if *pause_seconds < 1 {
+                    log::error!("暂停时间必须大于0，当前: {}", pause_seconds);
+                    return Err(format!("暂停时间必须大于0，当前: {}", pause_seconds));
+                }
+            }
+            Ok(())
+        }
+        "setting_switch" => {
+            // 未来实现
+            Ok(())
+        }
+        "workflow" => {
+            // 未来实现
+            Ok(())
+        }
+        _ => Err(format!("未知的触发动作类型: {}", action.version))
+    }
+}

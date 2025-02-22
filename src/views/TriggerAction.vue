@@ -37,14 +37,17 @@ const triggerActionType = ref([
 
 const currentTriggerActionType = ref('simple');
 
-// 新建/编辑动作的表单
+// 修改表单结构
 const actionForm = ref({
   id: '',
   name: '',
-  temp_plan_guid: '',
-  target_plan_guid: '',
-  pause_seconds: 1,
-  enabled: true
+  version: 'simple',
+  enabled: true,
+  worker: {
+    temp_plan_guid: '',
+    target_plan_guid: '',
+    pause_seconds: 1
+  }
 });
 
 // 加载所有触发动作
@@ -87,15 +90,17 @@ function showEditDialog(action = null) {
     actionForm.value = { ...action };
   } else {
     actionForm.value = {
+      id: '',
       name: '',
-      temp_plan_guid: '',
-      target_plan_guid: '',
-      pause_seconds: 1,
+      version: 'simple',
       enabled: false,
-      version: 'simple'
+      worker: {
+        temp_plan_guid: '',
+        target_plan_guid: '',
+        pause_seconds: 1
+      }
     };
   }
-  console.log(action);
   currentTriggerActionType.value = actionForm.value.version;
   editDialog.value = true;
 }
@@ -109,10 +114,8 @@ function getPlanName(guid) {
 // 保存动作
 async function saveAction() {
   if (!actionForm.value.name) {
-    return;  // 添加表单验证
+    return;
   }
-
-  actionForm.value.id = uuidv4();
 
   try {
     // 如果当前动作要被启用，先禁用其他动作
@@ -125,9 +128,14 @@ async function saveAction() {
       }
     }
 
-    await invoker('save_trigger_action', {
-      action: actionForm.value
-    });
+    // 根据类型设置 worker
+    const action = {
+      ...actionForm.value,
+      id: actionForm.value.id || uuidv4(),
+      version: currentTriggerActionType.value
+    };
+
+    await invoker('save_trigger_action', { action });
     editDialog.value = false;
     await loadActions();
   } catch (error) {
@@ -267,12 +275,12 @@ onMounted(async () => {
                   @change="handleActionToggle(action)" />
               </div>
               <div class="action-details">
-                <div class="plan-flow">
-                  <span class="plan-name">{{ getPlanName(action.temp_plan_guid) }}</span>
+                <div class="plan-flow" v-if="action.version === 'simple'">
+                  <span class="plan-name">{{ getPlanName(action.worker.temp_plan_guid) }}</span>
                   <i class="pi pi-arrow-right"></i>
-                  <span class="pause-time">{{ action.pause_seconds }}秒</span>
+                  <span class="pause-time">{{ action.worker.pause_seconds }}秒</span>
                   <i class="pi pi-arrow-right"></i>
-                  <span class="plan-name">{{ getPlanName(action.target_plan_guid) }}</span>
+                  <span class="plan-name">{{ getPlanName(action.worker.target_plan_guid) }}</span>
                 </div>
               </div>
             </div>
@@ -291,7 +299,8 @@ onMounted(async () => {
     }" class="action-dialog">
       <SelectButton v-if="!actionForm.id" v-model="currentTriggerActionType" :options="triggerActionType" optionLabel="label" optionValue="value" class="w-full" />
       <div v-if="currentTriggerActionType === 'simple'" class="action-form">
-        <Message severity="secondary" v-if="!actionForm.id">在动作被触发时，先会切换到一个临时的电源计划，再等待指定时间后切换到目标计划。这么做的目的是达到一个强制刷新的效果
+        <Message severity="secondary" v-if="!actionForm.id">
+          在动作被触发时，先会切换到一个临时的电源计划，再等待指定时间后切换到目标计划。这么做的目的是达到一个强制刷新的效果
         </Message>
         <div class="form-field">
           <label>动作名称</label>
@@ -299,16 +308,16 @@ onMounted(async () => {
         </div>
         <div class="form-field">
           <label>临时计划</label>
-          <Dropdown v-model="actionForm.temp_plan_guid" :options="powerPlans" optionLabel="name" optionValue="guid"
+          <Dropdown v-model="actionForm.worker.temp_plan_guid" :options="powerPlans" optionLabel="name" optionValue="guid"
             class="w-full" />
         </div>
         <div class="form-field">
           <label>停顿时间（秒）</label>
-          <InputNumber v-model="actionForm.pause_seconds" :min="1" :max="3600" />
+          <InputNumber v-model="actionForm.worker.pause_seconds" :min="1" :max="3600" />
         </div>
         <div class="form-field">
           <label>目标计划</label>
-          <Dropdown v-model="actionForm.target_plan_guid" :options="powerPlans" optionLabel="name" optionValue="guid"
+          <Dropdown v-model="actionForm.worker.target_plan_guid" :options="powerPlans" optionLabel="name" optionValue="guid"
             class="w-full" />
         </div>
       </div>
